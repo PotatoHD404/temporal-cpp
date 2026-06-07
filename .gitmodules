@@ -1,0 +1,9 @@
+[submodule "third_party/api"]
+	path = third_party/api
+	url = https://github.com/temporalio/api
+[submodule "third_party/reference/sdk-go"]
+	path = third_party/reference/sdk-go
+	url = https://github.com/temporalio/sdk-go
+[submodule "third_party/reference/sdk-python"]
+	path = third_party/reference/sdk-python
+	url = https://github.com/temporalio/sdk-python

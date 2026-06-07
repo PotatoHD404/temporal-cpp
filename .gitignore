@@ -1,0 +1,24 @@
+# Build output
+build/
+out/
+cmake-build-*/
+install/
+
+# Generated protobuf/grpc sources
+generated/
+
+# Compiler / tooling artifacts
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+compile_commands.json
+.cache/
+.ccls-cache/
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp

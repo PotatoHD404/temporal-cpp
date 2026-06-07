@@ -1,0 +1,18 @@
+# Checks tuned for a public C++20 SDK. Generated protobuf code is excluded via
+# HeaderFilterRegex (we never lint `generated/`).
+Checks: >
+  -*,
+  bugprone-*,
+  cppcoreguidelines-*,
+  modernize-*,
+  performance-*,
+  readability-*,
+  -modernize-use-trailing-return-type,
+  -readability-identifier-length,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -readability-magic-numbers,
+  -cppcoreguidelines-pro-type-vararg,
+  -bugprone-easily-swappable-parameters
+WarningsAsErrors: ''
+HeaderFilterRegex: 'include/temporal/.*|src/.*'
+FormatStyle: file
