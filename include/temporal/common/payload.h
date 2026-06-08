@@ -18,12 +18,14 @@ using Payloads = std::vector<Payload>;
 
 namespace metadata_keys {
 inline constexpr const char* kEncoding = "encoding";
+inline constexpr const char* kMessageType = "messageType";  // proto message full name
 }  // namespace metadata_keys
 
 namespace encodings {
 inline constexpr const char* kNull = "binary/null";
 inline constexpr const char* kRaw = "binary/plain";
 inline constexpr const char* kJson = "json/plain";
+inline constexpr const char* kProto = "binary/protobuf";
 }  // namespace encodings
 
 }  // namespace temporal

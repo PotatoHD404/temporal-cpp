@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -36,9 +37,23 @@ class PayloadConverter {
   virtual bool FromPayload(const Payload& p, nlohmann::json& out) const = 0;
 };
 
+namespace detail {
+// Detects a protobuf-generated message via its own member functions, so this
+// header never has to include the protobuf runtime. Proto values then encode as
+// `binary/protobuf` instead of going through the JSON stack.
+template <class T, class = void>
+struct is_proto_message : std::false_type {};
+template <class T>
+struct is_proto_message<
+    T, std::void_t<decltype(std::declval<const T&>().SerializeAsString()),
+                   decltype(std::declval<const T&>().GetTypeName()),
+                   decltype(std::declval<T&>().ParseFromString(std::declval<std::string>()))>>
+    : std::true_type {};
+}  // namespace detail
+
 // Ordered set of PayloadConverters. Equivalent to the Go SDK's default composite
 // converter: Nil, ByteSlice, JSON. Values cross the public API as any type that
-// nlohmann::json can (de)serialize.
+// nlohmann::json can (de)serialize; protobuf messages are encoded as binary protobuf.
 class DataConverter {
  public:
   DataConverter();  // default stack
@@ -50,9 +65,16 @@ class DataConverter {
   Payload ToPayloadJson(const nlohmann::json& value) const;
   nlohmann::json FromPayloadJson(const Payload& payload) const;
 
+  // Binary-protobuf payloads (used by the proto branch of ToPayload/FromPayload).
+  // ProtoBytes returns the wrapped message bytes; throws if the encoding mismatches.
+  Payload ToProtoPayload(const std::string& serialized, const std::string& message_type) const;
+  std::string ProtoBytes(const Payload& payload) const;
+
   template <class T>
   Payload ToPayload(const T& value) const {
-    if constexpr (std::is_same_v<std::decay_t<T>, nlohmann::json>) {
+    if constexpr (detail::is_proto_message<T>::value) {
+      return ToProtoPayload(value.SerializeAsString(), std::string(value.GetTypeName()));
+    } else if constexpr (std::is_same_v<std::decay_t<T>, nlohmann::json>) {
       return ToPayloadJson(value);
     } else {
       return ToPayloadJson(nlohmann::json(value));
@@ -61,11 +83,20 @@ class DataConverter {
 
   template <class T>
   T FromPayload(const Payload& payload) const {
-    nlohmann::json j = FromPayloadJson(payload);
-    if constexpr (std::is_same_v<T, nlohmann::json>) {
-      return j;
+    if constexpr (detail::is_proto_message<T>::value) {
+      T msg;
+      if (!msg.ParseFromString(ProtoBytes(payload))) {
+        throw DataConverterError("failed to parse protobuf payload as " +
+                                 std::string(msg.GetTypeName()));
+      }
+      return msg;
     } else {
-      return j.get<T>();
+      nlohmann::json j = FromPayloadJson(payload);
+      if constexpr (std::is_same_v<T, nlohmann::json>) {
+        return j;
+      } else {
+        return j.get<T>();
+      }
     }
   }
 

@@ -109,4 +109,22 @@ nlohmann::json DataConverter::FromPayloadJson(const Payload& payload) const {
   throw DataConverterError("no payload converter for encoding: " + enc);
 }
 
+Payload DataConverter::ToProtoPayload(const std::string& serialized,
+                                      const std::string& message_type) const {
+  Payload p;
+  p.metadata[metadata_keys::kEncoding] = encodings::kProto;
+  p.metadata[metadata_keys::kMessageType] = message_type;
+  p.data = serialized;
+  return p;
+}
+
+std::string DataConverter::ProtoBytes(const Payload& payload) const {
+  const auto it = payload.metadata.find(std::string(metadata_keys::kEncoding));
+  const std::string enc = it == payload.metadata.end() ? std::string() : it->second;
+  if (enc != encodings::kProto) {
+    throw DataConverterError("expected binary/protobuf payload, got encoding: " + enc);
+  }
+  return payload.data;
+}
+
 }  // namespace temporal
