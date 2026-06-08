@@ -5,6 +5,7 @@ const sidebars = {
   docs: [
     'intro',
     'getting-started',
+    'tutorial',
     'concepts',
     {
       type: 'category',
@@ -16,9 +17,12 @@ const sidebars = {
         'workflows/composition',
       ],
     },
+    'patterns',
     'client-and-worker',
     'data-conversion',
+    'error-handling',
     'advanced',
+    'production',
     'architecture',
     'testing',
     'parity',

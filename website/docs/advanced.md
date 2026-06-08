@@ -9,7 +9,7 @@ Beyond the core programming model, the SDK implements the determinism-critical a
 production-leaning features below. Each is exercised by the test suite against a
 real `temporal server start-dev`.
 
-## Non-determinism detection
+## Non-determinism detection {#non-determinism-detection}
 
 A workflow must be deterministic: replayed against its recorded history, it has to
 emit exactly the same orchestration commands, in the same order. The engine
@@ -69,7 +69,7 @@ if (v == temporal::workflow::kDefaultVersion) {
 `GetVersion` call existed. Once every pre-change execution has drained, you can
 drop the old branch and raise `min_supported`.
 
-## Update validators
+## Update validators {#update-validators}
 
 An update handler can take an optional **read-only validator** that runs *before*
 the update is accepted. If the validator throws, the update is rejected and the
