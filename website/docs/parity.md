@@ -57,10 +57,10 @@ cache. This page is the honest accounting.
 | Updates (`SetUpdateHandler`) | ✅ | accept + complete on the live path |
 | Update validators | ✅ | read-only validator; rejection is ephemeral (no history entry) |
 | Selectors | ✅ | future cases + signal-channel receive cases (`AddReceive`) |
-| Child workflows | ✅ | basic; no parent-close-policy / cancel / signal-child |
+| Child workflows | ✅ | basic + cancellation; no parent-close-policy / signal-child |
 | Continue-as-new | ✅ | |
 | Observe cancellation (`IsCancelled`) | ✅ | |
-| Cancellation scopes / propagation | 🟡 | `AwaitCancellation` + timer & activity `Future::Cancel` ✅; child-workflow cancel ❌ |
+| Cancellation scopes / propagation | ✅ | `AwaitCancellation` + timer / activity / child-workflow `Future::Cancel` |
 | `GetVersion` / patching | ✅ | marker-based; `kDefaultVersion` on pre-version history |
 | SideEffect / MutableSideEffect | 🟡 | `SideEffect` ✅ (marker record/replay); MutableSideEffect ❌ |
 | Local activities | ❌ | |
@@ -122,7 +122,7 @@ Rough priority order (see the repo's `docs/ROADMAP.md` for detail):
    (`max_cached_workflows`) + heartbeat cancel-detection (`activity::Context::IsCancelled`);
    remaining: history pagination, heartbeat throttling.
 2. **Workflow feature surface** — ✅ `SideEffect` + `GetVersion` + update validators + cancellation
-   (timer, activity, `AwaitCancellation`) + selector channel cases; remaining: child-workflow cancel,
+   (timer, activity, child-workflow, `AwaitCancellation`) + selector channel cases; remaining:
    MutableSideEffect, local activities.
 3. **Production concerns** — TLS/mTLS + API-key auth, interceptors, metrics & tracing,
    proto/protoJSON converters + payload codecs, worker tuning.

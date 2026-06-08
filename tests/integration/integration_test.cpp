@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <memory>
+#include <random>
 #include <string>
 #include <thread>
 
@@ -211,6 +212,18 @@ std::string CancelAwareWorkflow(temporal::workflow::Context& ctx) {
   });
   sel.Select();
   return out;
+}
+
+// Starts a cancel-aware child, lets it start, then cancels it and returns the
+// child's result. The child observes the cancel and finishes "cancelled".
+// (Temporal forbids Start + RequestCancel of a child in the same workflow task,
+// so the timer forces the cancel into a later task.)
+std::string CancelChildWorkflow(temporal::workflow::Context& ctx) {
+  temporal::ChildWorkflowOptions o;
+  auto child = ctx.ExecuteChildWorkflow<std::string>(o, "CancelAwareWorkflow");
+  ctx.Sleep(std::chrono::seconds(1));
+  child.Cancel();
+  return child.Get();
 }
 
 // Heartbeats until it observes a server cancel request, then returns "cancelled".
@@ -886,7 +899,9 @@ TEST_F(IntegrationTest, ScheduleCreateDescribeDelete) {
 // those two (visibility is eventually consistent, so we poll briefly).
 TEST_F(IntegrationTest, ListAndCountWorkflows) {
   const auto tq = UniqueTaskQueue("list");
-  const std::string wf_type = "ListCountWf" + std::to_string(g_seq.fetch_add(1));
+  // Process-unique type: g_seq resets each run but a dev server persists prior
+  // runs' workflows, so a per-process seed keeps the visibility query exact.
+  const std::string wf_type = "ListCountWf" + std::to_string(std::random_device{}());
   temporal::worker::Worker worker(*client_, tq);
   worker.RegisterWorkflow(wf_type, SleepWorkflow);
   worker.Start();
@@ -911,6 +926,21 @@ TEST_F(IntegrationTest, ListAndCountWorkflows) {
   EXPECT_EQ(listed[0].workflow_type, wf_type);
   EXPECT_FALSE(listed[0].run_id.empty());
   EXPECT_EQ(client_->CountWorkflows(query), 2);
+  worker.Stop();
+}
+
+// A parent can cancel a running child workflow: the child observes the cancel
+// (AwaitCancellation) and finishes "cancelled", which the parent receives.
+TEST_F(IntegrationTest, ChildWorkflowCancellation) {
+  const auto tq = UniqueTaskQueue("child-cancel");
+  temporal::worker::Worker worker(*client_, tq);
+  worker.RegisterWorkflow("CancelChildWorkflow", CancelChildWorkflow);
+  worker.RegisterWorkflow("CancelAwareWorkflow", CancelAwareWorkflow);
+  worker.Start();
+  temporal::StartWorkflowOptions o;
+  o.task_queue = tq;
+  auto handle = client_->StartWorkflow(o, "CancelChildWorkflow");
+  EXPECT_EQ(handle.Result<std::string>(), "cancelled");
   worker.Stop();
 }
 

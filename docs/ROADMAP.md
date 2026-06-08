@@ -56,7 +56,8 @@ priority/dependency.
 - **Cancellation** ✅ (mostly): timer cancellation via `Future::Cancel()`; workflow reacts to its
   own cancel via `ctx.AwaitCancellation()` (a Selector case); **activity cancellation** via
   `Future::Cancel()` → `RequestCancelActivityTask`, observed activity-side through
-  `activity::Context::IsCancelled()` (heartbeat). Remaining: child-workflow cancellation +
+  `activity::Context::IsCancelled()` (heartbeat); **child-workflow cancellation** via
+  `Future::Cancel()` → `RequestCancelExternalWorkflowExecution` (child_workflow_only). Remaining:
   parent-close-policy.
 - **Selector channel cases** ✅ — `Selector::AddReceive` waits on a signal channel ("signal OR
   timeout"); a non-consuming `HasSignal` peek backs the ready check.

@@ -63,6 +63,7 @@ struct TimerOutcome {
 // Outcome of a child workflow, keyed by the (parent-assigned) child workflow_id.
 struct ChildOutcome {
   bool initiated = false;
+  bool cancel_requested = false;
   bool resolved = false;
   bool failed = false;
   Payloads result;
@@ -201,6 +202,22 @@ Prescan ScanHistory(const hist::History& history) {
         o.failed = true;
         o.failure_message = a.failure().message();
         o.failure_type = a.failure().application_failure_info().type();
+        break;
+      }
+      case enums::EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: {
+        const auto& a = ev.request_cancel_external_workflow_execution_initiated_event_attributes();
+        const std::string& wid = a.workflow_execution().workflow_id();
+        ps.commands.push_back({CommandEvent::Kind::RequestCancelExternalWorkflow, wid, ""});
+        ps.children[wid].cancel_requested = true;
+        break;
+      }
+      case enums::EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED: {
+        const auto& a = ev.child_workflow_execution_canceled_event_attributes();
+        auto& o = ps.children[a.workflow_execution().workflow_id()];
+        o.resolved = true;
+        o.failed = true;
+        o.failure_message = "child workflow cancelled";
+        o.failure_type = "CanceledError";
         break;
       }
       case enums::EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED: {
@@ -418,6 +435,18 @@ class WorkflowRunner final : public WorkflowOutbound {
       }
       return;
     }
+    if (state->op == FutureState::Op::ChildWorkflow) {
+      // Ask the server to cancel the child workflow (child_workflow_only). Like an
+      // activity, the future is resolved later by the child's own canceled /
+      // completed / failed event, not here.
+      produced_commands_.push_back(
+          {CommandEvent::Kind::RequestCancelExternalWorkflow, state->op_id, ""});
+      const auto child = scan_.children.find(state->op_id);
+      if (!(child != scan_.children.end() && child->second.cancel_requested)) {
+        EmitRequestCancelExternalWorkflow(state->op_id);
+      }
+      return;
+    }
     logger_->Warn("cancellation not supported for this operation",
                   {log::F("op_id", state->op_id)});
   }
@@ -429,6 +458,8 @@ class WorkflowRunner final : public WorkflowOutbound {
     const std::string id = options.id.empty() ? auto_id : options.id;
     produced_commands_.push_back({CommandEvent::Kind::ChildWorkflow, id, std::string(workflow_type)});
     auto state = std::make_shared<FutureState>();
+    state->op = FutureState::Op::ChildWorkflow;
+    state->op_id = id;
     const auto it = scan_.children.find(id);
     if (it != scan_.children.end() && it->second.initiated) {
       const ChildOutcome& o = it->second;
@@ -694,6 +725,17 @@ class WorkflowRunner final : public WorkflowOutbound {
           }
           break;
         }
+        case enums::EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED: {
+          const auto& a = ev.child_workflow_execution_canceled_event_attributes();
+          const auto it = child_futures_.find(a.workflow_execution().workflow_id());
+          if (it != child_futures_.end()) {
+            it->second->ready = true;
+            it->second->failed = true;
+            it->second->failure_message = "child workflow cancelled";
+            it->second->failure_type = "CanceledError";
+          }
+          break;
+        }
         case enums::EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED: {
           const auto& a = ev.workflow_execution_signaled_event_attributes();
           scan_.signals[a.signal_name()].push_back(FromProtoPayloads(a.input()));
@@ -781,6 +823,16 @@ class WorkflowRunner final : public WorkflowOutbound {
     if (!input.empty()) {
       *attr->mutable_input() = ToProtoPayloads(input);
     }
+    commands_.push_back(std::move(c));
+  }
+
+  void EmitRequestCancelExternalWorkflow(const std::string& workflow_id) {
+    cmd::Command c;
+    c.set_command_type(enums::COMMAND_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION);
+    auto* attr = c.mutable_request_cancel_external_workflow_execution_command_attributes();
+    attr->set_namespace_(info_.ns);
+    attr->set_workflow_id(workflow_id);
+    attr->set_child_workflow_only(true);
     commands_.push_back(std::move(c));
   }
 

@@ -24,6 +24,7 @@ struct CommandEvent {
     Timer,              // StartTimer           <-> TimerStarted
     CancelTimer,        // CancelTimer          <-> TimerCanceled
     ChildWorkflow,      // StartChildWorkflow   <-> StartChildWorkflowExecutionInitiated
+    RequestCancelExternalWorkflow,  // RequestCancelExternalWorkflowExecution <-> ...Initiated
     Marker,             // RecordMarker         <-> MarkerRecorded
     CompleteWorkflow,   // CompleteWorkflowExecution  <-> WorkflowExecutionCompleted
     FailWorkflow,       // FailWorkflowExecution      <-> WorkflowExecutionFailed
@@ -47,6 +48,8 @@ inline const char* CommandKindName(CommandEvent::Kind k) {
       return "CancelTimer";
     case CommandEvent::Kind::ChildWorkflow:
       return "StartChildWorkflow";
+    case CommandEvent::Kind::RequestCancelExternalWorkflow:
+      return "RequestCancelExternalWorkflowExecution";
     case CommandEvent::Kind::Marker:
       return "RecordMarker";
     case CommandEvent::Kind::CompleteWorkflow:
@@ -71,6 +74,7 @@ inline bool CommandMatchesEvent(const CommandEvent& produced, const CommandEvent
     case CommandEvent::Kind::ChildWorkflow:
       return produced.id == expected.id && produced.name == expected.name;
     case CommandEvent::Kind::RequestCancelActivity:
+    case CommandEvent::Kind::RequestCancelExternalWorkflow:
     case CommandEvent::Kind::Timer:
     case CommandEvent::Kind::CancelTimer:
     case CommandEvent::Kind::Marker:
