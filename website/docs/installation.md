@@ -39,21 +39,25 @@ shadowed).
 
 ### Linux — system packages
 
-Debian/Ubuntu:
+The build consumes gRPC/Protobuf through their **CMake config packages**
+(`find_package(... CONFIG)`). Whether your distro ships those decides if system packages are
+enough:
 
-```bash
-sudo apt-get install -y cmake make g++ \
-  libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc \
-  nlohmann-json3-dev
-```
+- **Fedora** ships them, so system packages work directly:
 
-Fedora:
+  ```bash
+  sudo dnf install cmake gcc-c++ grpc-devel grpc-plugins protobuf-devel protobuf-compiler json-devel
+  ```
 
-```bash
-sudo dnf install cmake gcc-c++ grpc-devel grpc-plugins protobuf-devel json-devel
-```
+- **Debian/Ubuntu** ship pkg-config files but *no* CMake config packages for gRPC/Protobuf, so
+  `find_package(gRPC CONFIG)` / `find_package(protobuf CONFIG)` won't find them. Use the **Conan**
+  path below — it's what CI uses on Linux.
 
 ### Any platform — Conan
+
+When the system packages don't provide CMake config packages (Debian/Ubuntu, Windows), or you just
+want reproducible deps, use Conan — it supplies gRPC, Protobuf, and nlohmann_json (and their config
+packages) on macOS, Linux, and Windows alike.
 
 [Conan](https://conan.io) resolves the deps from source/binaries on macOS, Linux, and Windows, so
 you don't depend on a system package manager:
@@ -152,7 +156,7 @@ CMakeToolchain
 | Platform | How | Status |
 | --- | --- | --- |
 | macOS (arm64) | Homebrew or Conan | Built + fully tested in CI |
-| Linux (x86-64) | apt or Conan | Built + unit-tested in CI |
+| Linux (x86-64) | Conan (or Fedora system packages) | Built in CI via Conan |
 | Windows (MSVC) | Conan | Compiler flags are MSVC-safe; not yet exercised in CI |
 
 The CMake setup avoids platform-specific assumptions (warning flags are gated to GNU/Clang, the

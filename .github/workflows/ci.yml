@@ -52,44 +52,13 @@ jobs:
         if: always()
         run: kill "$(cat /tmp/temporal.pid)" 2>/dev/null || true
 
-  # Linux: deps via apt. Proves the SDK builds and unit-tests pass off macOS.
+  # Linux via Conan. The SDK consumes its deps through find_package(... CONFIG),
+  # and Debian/Ubuntu's protobuf/gRPC packages ship pkg-config files but no CMake
+  # config packages — so Conan supplies the toolchain deps (with their config
+  # packages) instead. This proves the SDK builds off macOS and exercises
+  # conanfile.py end to end on a clean machine.
   linux:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            cmake make g++ \
-            libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc \
-            nlohmann-json3-dev
-
-      - name: Configure
-        run: cmake --preset default
-
-      - name: Build
-        run: cmake --build build -j
-
-      - name: Unit tests
-        run: ctest --test-dir build --output-on-failure -LE integration
-
-      - name: Install + downstream find_package smoke test
-        run: |
-          cmake --install build --prefix "$RUNNER_TEMP/tcpp-install"
-          cmake -S tests/packaging -B "$RUNNER_TEMP/consumer" \
-            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/tcpp-install"
-          cmake --build "$RUNNER_TEMP/consumer"
-
-  # Conan: resolve deps and build via the conanfile, exercising the recipe on a
-  # clean machine. Non-blocking until the recipe is verified end to end on a
-  # host with Conan installed (the maintainer cannot run Conan locally yet).
-  conan:
-    runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -99,8 +68,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Conan
-        run: pip install "conan>=2.0,<3"
+      - name: Install toolchain + Conan
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake make g++
+          pip install "conan>=2.0,<3"
 
       - name: Cache Conan packages
         uses: actions/cache@v4
@@ -109,7 +81,7 @@ jobs:
           key: conan2-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
           restore-keys: conan2-${{ runner.os }}-
 
-      - name: Build via Conan
+      - name: Build the SDK via Conan
         run: |
           conan profile detect --force
           conan install . --build=missing -s build_type=Release

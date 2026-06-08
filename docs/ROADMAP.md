@@ -91,6 +91,7 @@ priority/dependency.
   (`tests/packaging/`). pkg-config remaining.
 - **Conan** packaging ✅ — `conanfile.py` (CMakeToolchain + CMakeDeps); a CI job exercises the recipe
   (non-blocking until verified on a Conan host). vcpkg port remaining.
-- **Linux CI** ✅ — apt-based Ubuntu job (build + unit tests) alongside macOS. Windows/MSVC is
+- **Linux CI** ✅ — Conan-based Ubuntu job builds the SDK alongside macOS (Debian/Ubuntu system
+  protobuf/gRPC ship no CMake config packages, so Conan supplies them). Windows/MSVC is
   compiler-flag-clean (warning flags gated, tools resolved from imported targets) but not yet CI-covered.
 - Optional: build protobuf/gRPC via `FetchContent` for hermetic builds.
