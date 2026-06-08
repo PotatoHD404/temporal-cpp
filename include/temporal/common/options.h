@@ -89,4 +89,14 @@ struct WorkerOptions {
   int max_cached_workflows = 0;
 };
 
+// Options for `Client::CreateSchedule`. The schedule runs the given workflow on a
+// fixed interval. (A minimal subset of the schedule API: interval spec +
+// start-workflow action; calendars, overlap policy, and pause are not exposed.)
+struct ScheduleOptions {
+  std::chrono::seconds interval{0};  // run the action every `interval`
+  std::string workflow_type;         // required: the workflow to start
+  std::string task_queue;            // required: its task queue
+  std::string workflow_id;           // default: "<schedule id>-workflow"
+};
+
 }  // namespace temporal

@@ -867,4 +867,18 @@ TEST_F(IntegrationTest, SelectorPicksSignalOverTimeout) {
   worker.Stop();
 }
 
+// A schedule can be created (interval + start-workflow action), described, and
+// deleted via the client. A 1-hour interval ensures it doesn't fire during the
+// test, so no workflows are spawned.
+TEST_F(IntegrationTest, ScheduleCreateDescribeDelete) {
+  const std::string schedule_id = UniqueTaskQueue("schedule");
+  temporal::ScheduleOptions opts;
+  opts.interval = std::chrono::hours(1);
+  opts.workflow_type = "EchoWorkflow";
+  opts.task_queue = schedule_id + "-tq";
+  client_->CreateSchedule(schedule_id, opts);
+  EXPECT_TRUE(client_->DescribeSchedule(schedule_id));  // it exists
+  EXPECT_NO_THROW(client_->DeleteSchedule(schedule_id));
+}
+
 }  // namespace

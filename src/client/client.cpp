@@ -10,6 +10,7 @@
 #include "temporal/api/enums/v1/workflow.pb.h"
 #include "temporal/api/history/v1/message.pb.h"
 #include "temporal/api/query/v1/message.pb.h"
+#include "temporal/api/schedule/v1/message.pb.h"
 #include "temporal/api/update/v1/message.pb.h"
 
 #include "internal/grpc_client.h"
@@ -286,6 +287,40 @@ WorkflowHandle Client::SignalWithStartWorkflowPayloads(const StartWorkflowOption
 
   const auto resp = grpc_->SignalWithStartWorkflowExecution(req);
   return {grpc_, converter_, ns_, workflow_id, resp.run_id()};
+}
+
+void Client::CreateSchedule(const std::string& schedule_id, const ScheduleOptions& options) {
+  internal::wsv::CreateScheduleRequest req;
+  req.set_namespace_(ns_);
+  req.set_schedule_id(schedule_id);
+  req.set_identity(identity_);
+  req.set_request_id(internal::NewUuid());
+  auto* schedule = req.mutable_schedule();
+  if (options.interval.count() > 0) {
+    *schedule->mutable_spec()->add_interval()->mutable_interval() =
+        internal::ToProtoDuration(options.interval);
+  }
+  auto* start = schedule->mutable_action()->mutable_start_workflow();
+  start->set_workflow_id(options.workflow_id.empty() ? schedule_id + "-workflow"
+                                                     : options.workflow_id);
+  start->mutable_workflow_type()->set_name(options.workflow_type);
+  start->mutable_task_queue()->set_name(options.task_queue);
+  grpc_->CreateSchedule(req);
+}
+
+bool Client::DescribeSchedule(const std::string& schedule_id) {
+  internal::wsv::DescribeScheduleRequest req;
+  req.set_namespace_(ns_);
+  req.set_schedule_id(schedule_id);
+  return grpc_->DescribeSchedule(req).has_schedule();
+}
+
+void Client::DeleteSchedule(const std::string& schedule_id) {
+  internal::wsv::DeleteScheduleRequest req;
+  req.set_namespace_(ns_);
+  req.set_schedule_id(schedule_id);
+  req.set_identity(identity_);
+  grpc_->DeleteSchedule(req);
 }
 
 }  // namespace temporal::client

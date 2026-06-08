@@ -74,7 +74,8 @@ priority/dependency.
 
 ## Phase 4 — breadth
 
-- **Schedules** client API.
+- **Schedules** client API 🟡 — `Client::CreateSchedule`/`DescribeSchedule`/`DeleteSchedule`
+  (interval spec + start-workflow action). Remaining: update/list/trigger/pause, calendar/cron specs.
 - **Nexus** operations.
 - **Worker versioning** / deployments.
 - **Replay/test framework** ✅ — `Worker::ReplayWorkflowHistory(json)` replays a recorded history

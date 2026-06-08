@@ -123,6 +123,13 @@ class Client {
 
   WorkflowHandle GetHandle(std::string workflow_id, std::string run_id = "");
 
+  // Create a schedule that starts a workflow on a fixed interval. (Minimal
+  // surface: interval + start-workflow action — see ScheduleOptions.)
+  void CreateSchedule(const std::string& schedule_id, const ScheduleOptions& options);
+  // Returns whether the schedule exists; throws on errors other than not-found.
+  bool DescribeSchedule(const std::string& schedule_id);
+  void DeleteSchedule(const std::string& schedule_id);
+
   // Accessors used by Worker.
   const std::shared_ptr<internal::GrpcClient>& grpc() const { return grpc_; }
   const std::shared_ptr<DataConverter>& data_converter() const { return converter_; }
