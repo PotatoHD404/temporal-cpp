@@ -83,6 +83,16 @@ class Context {
   // workflow decides how to react (finish, clean up, etc.).
   bool IsCancelled() const { return env_->IsCancelRequested(); }
 
+  // A future that completes when this workflow is cancelled. Use it as a Selector
+  // case to race work against cancellation, then clean up (e.g. cancel a timer):
+  //   Selector s(ctx);
+  //   s.AddFuture(work, ...);
+  //   s.AddFuture(ctx.AwaitCancellation(), [&]{ work.Cancel(); });
+  //   s.Select();
+  Future<void> AwaitCancellation() {
+    return Future<void>(env_->AwaitCancellation(), converter_, env_);
+  }
+
   // Register a query handler `R Fn(Args...)`, à la `workflow.SetQueryHandler`.
   // Handlers must be read-only (no activities/timers): they run against live
   // workflow state when a query arrives. Re-registering replaces the handler.

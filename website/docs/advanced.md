@@ -110,9 +110,29 @@ timer.Get();      // returns right away
 ```
 
 Cancellation is deterministic — the workflow reproduces the `CancelTimer` command
-on replay. Activity and child-workflow cancellation, and automatic propagation
-from a workflow-level cancel, are not implemented yet (workflow-level cancellation
-is observe-only via `ctx.IsCancelled()`).
+on replay.
+
+To **react** to a workflow-level cancellation (the "clean up and stop" pattern),
+wait on `ctx.AwaitCancellation()` as a `Selector` case, racing it against your
+work:
+
+```cpp
+auto work = ctx.NewTimer(std::chrono::minutes(5));
+std::string out;
+temporal::workflow::Selector sel(ctx);
+sel.AddFuture(work, [&] { out = "done"; });
+sel.AddFuture(ctx.AwaitCancellation(), [&] {
+  work.Cancel();
+  out = "cancelled";
+});
+sel.Select();
+```
+
+When the workflow is cancelled, `AwaitCancellation` completes, the selector takes
+that branch, and the workflow cancels its timer and finishes promptly. Activity
+and child-workflow cancellation are not wired yet — the activity *side* is exposed
+(`activity::Context::IsCancelled` observes a server cancel via heartbeat), but the
+workflow→activity `RequestCancelActivityTask` trigger is the remaining piece.
 
 ## Replay testing
 

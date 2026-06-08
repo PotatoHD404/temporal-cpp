@@ -93,6 +93,11 @@ class WorkflowOutbound {
   // Whether a cancel has been requested for this workflow execution.
   virtual bool IsCancelRequested() const = 0;
 
+  // A future that becomes ready when this workflow execution is cancelled. Lets a
+  // workflow wait on cancellation (e.g. as a Selector case) and react, rather
+  // than only polling IsCancelRequested().
+  virtual std::shared_ptr<FutureState> AwaitCancellation() = 0;
+
   // Register a query handler (re-registered on every replay). Invoked against
   // the live, suspended workflow state when a query task arrives.
   virtual void RegisterQueryHandler(std::string name, QueryFn handler) = 0;

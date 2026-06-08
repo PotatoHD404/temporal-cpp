@@ -470,6 +470,16 @@ class WorkflowRunner final : public WorkflowOutbound {
 
   bool IsCancelRequested() const override { return scan_.cancel_requested; }
 
+  std::shared_ptr<FutureState> AwaitCancellation() override {
+    auto state = std::make_shared<FutureState>();
+    if (scan_.cancel_requested) {
+      state->ready = true;
+    } else {
+      cancel_futures_.push_back(state);  // resolved when a cancel event arrives
+    }
+    return state;
+  }
+
   void RegisterQueryHandler(std::string name, QueryFn handler) override {
     query_handlers_.insert_or_assign(std::move(name), std::move(handler));
   }
@@ -620,6 +630,9 @@ class WorkflowRunner final : public WorkflowOutbound {
         }
         case enums::EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED:
           scan_.cancel_requested = true;
+          for (const auto& s : cancel_futures_) {
+            s->ready = true;
+          }
           break;
         default:
           break;
@@ -718,6 +731,7 @@ class WorkflowRunner final : public WorkflowOutbound {
   std::unordered_map<std::string, std::shared_ptr<FutureState>> activity_futures_;  // by activity_id
   std::unordered_map<std::string, std::shared_ptr<FutureState>> timer_futures_;     // by timer_id
   std::unordered_map<std::string, std::shared_ptr<FutureState>> child_futures_;     // by child wf id
+  std::vector<std::shared_ptr<FutureState>> cancel_futures_;  // resolved on workflow cancel
   std::vector<cmd::Command> commands_;
   std::vector<CommandEvent> produced_commands_;  // ordered, for non-determinism detection
   Status status_ = Status::Blocked;

@@ -107,6 +107,12 @@ class FakeEnv : public internal::WorkflowOutbound {
 
   bool IsCancelRequested() const override { return cancel_requested; }
 
+  std::shared_ptr<internal::FutureState> AwaitCancellation() override {
+    auto st = std::make_shared<internal::FutureState>();
+    st->ready = cancel_requested;
+    return st;
+  }
+
   const workflow::WorkflowInfo& Info() const override { return info; }
   log::Logger& Logger() const override { return *log::DefaultLogger(); }
   bool IsReplaying() const override { return replaying; }
@@ -334,6 +340,15 @@ TEST(WorkflowRuntime, FutureCancelResolvesTheUnderlyingState) {
   EXPECT_FALSE(timer.IsReady());
   timer.Cancel();
   EXPECT_TRUE(timer.IsReady());  // Future::Cancel routed through env->Cancel()
+}
+
+TEST(WorkflowRuntime, AwaitCancellationReadyOnlyWhenCancelled) {
+  FakeEnv env;
+  const auto dc = DataConverter::Default();
+  workflow::Context ctx(&env, dc.get());
+  EXPECT_FALSE(ctx.AwaitCancellation().IsReady());  // not cancelled
+  env.cancel_requested = true;
+  EXPECT_TRUE(ctx.AwaitCancellation().IsReady());  // cancelled -> ready
 }
 
 }  // namespace

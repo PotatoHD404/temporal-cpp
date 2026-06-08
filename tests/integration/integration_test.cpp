@@ -197,6 +197,22 @@ std::string TimerCancelWorkflow(temporal::workflow::Context& ctx) {
   return "cancelled";
 }
 
+// Waits on a long timer, racing it against cancellation. When the workflow is
+// cancelled it wakes immediately, cancels the timer, and returns "cancelled".
+std::string CancelAwareWorkflow(temporal::workflow::Context& ctx) {
+  auto timer = ctx.NewTimer(60s);
+  auto cancelled = ctx.AwaitCancellation();
+  std::string out;
+  temporal::workflow::Selector sel(ctx);
+  sel.AddFuture(timer, [&]() { out = "timer-fired"; });
+  sel.AddFuture(cancelled, [&]() {
+    timer.Cancel();
+    out = "cancelled";
+  });
+  sel.Select();
+  return out;
+}
+
 // Runs longer than its heartbeat timeout but heartbeats to stay alive.
 std::string HeartbeatActivity(temporal::activity::Context& ctx, int) {
   for (int i = 0; i < 5; ++i) {
@@ -755,6 +771,24 @@ TEST_F(IntegrationTest, BoundedCacheEvictsAndStillCompletes) {
   EXPECT_EQ(a.Result<std::string>(), "Hello, Ada");      // recovered via replay
   EXPECT_EQ(b.Result<std::string>(), "Hello, Linus");
   EXPECT_GE(worker.replays(), 3);  // 2 first-tasks + at least one eviction-replay
+  worker.Stop();
+}
+
+// A workflow can wait on cancellation (AwaitCancellation) as a Selector case and
+// react: here it cancels its timer and returns promptly instead of waiting 60s.
+TEST_F(IntegrationTest, WorkflowReactsToCancellationViaSelector) {
+  const auto tq = UniqueTaskQueue("wf-cancel");
+  temporal::worker::Worker worker(*client_, tq);
+  worker.RegisterWorkflow("CancelAwareWorkflow", CancelAwareWorkflow);
+  worker.Start();
+  temporal::StartWorkflowOptions o;
+  o.task_queue = tq;
+  const auto t0 = std::chrono::steady_clock::now();
+  auto handle = client_->StartWorkflow(o, "CancelAwareWorkflow");
+  std::this_thread::sleep_for(3s);  // let the workflow park on the selector
+  handle.Cancel();
+  EXPECT_EQ(handle.Result<std::string>(), "cancelled");  // woke via AwaitCancellation
+  EXPECT_LT(std::chrono::steady_clock::now() - t0, std::chrono::seconds(20));
   worker.Stop();
 }
 
