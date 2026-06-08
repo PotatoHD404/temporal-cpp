@@ -213,6 +213,38 @@ std::string CancelAwareWorkflow(temporal::workflow::Context& ctx) {
   return out;
 }
 
+// Heartbeats until it observes a server cancel request, then returns "cancelled".
+std::string CancellableActivity(temporal::activity::Context& ctx, int) {
+  for (int i = 0; i < 80; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    ctx.RecordHeartbeat(i);
+    if (ctx.IsCancelled()) {
+      return "cancelled";
+    }
+  }
+  return "finished";
+}
+
+// Races a long heartbeating activity against cancellation. On cancel it asks the
+// server to cancel the activity, then awaits its result (which is "cancelled"
+// once the activity observes the request via its heartbeat).
+std::string ActivityCancelWorkflow(temporal::workflow::Context& ctx) {
+  temporal::ActivityOptions o;
+  o.start_to_close_timeout = 60s;
+  o.heartbeat_timeout = 5s;
+  auto act = ctx.ExecuteActivity<std::string>(o, "CancellableActivity", 0);
+  auto cancelled = ctx.AwaitCancellation();
+  bool cancel_requested = false;
+  temporal::workflow::Selector sel(ctx);
+  sel.AddFuture<std::string>(act, [&](std::string) {});  // finished naturally
+  sel.AddFuture(cancelled, [&]() {
+    act.Cancel();  // RequestCancelActivityTask -> activity sees it via heartbeat
+    cancel_requested = true;
+  });
+  sel.Select();
+  return cancel_requested ? act.Get() : "finished";
+}
+
 // Runs longer than its heartbeat timeout but heartbeats to stay alive.
 std::string HeartbeatActivity(temporal::activity::Context& ctx, int) {
   for (int i = 0; i < 5; ++i) {
@@ -789,6 +821,26 @@ TEST_F(IntegrationTest, WorkflowReactsToCancellationViaSelector) {
   handle.Cancel();
   EXPECT_EQ(handle.Result<std::string>(), "cancelled");  // woke via AwaitCancellation
   EXPECT_LT(std::chrono::steady_clock::now() - t0, std::chrono::seconds(20));
+  worker.Stop();
+}
+
+// End-to-end activity cancellation: a cancelled workflow asks the server to
+// cancel its in-flight activity, the activity observes the request via its
+// heartbeat and returns "cancelled", and the workflow receives that result.
+TEST_F(IntegrationTest, ActivityCancellationEndToEnd) {
+  const auto tq = UniqueTaskQueue("act-cancel");
+  temporal::worker::Worker worker(*client_, tq);
+  worker.RegisterWorkflow("ActivityCancelWorkflow", ActivityCancelWorkflow);
+  worker.RegisterActivity("CancellableActivity", CancellableActivity);
+  worker.Start();
+  temporal::StartWorkflowOptions o;
+  o.task_queue = tq;
+  const auto t0 = std::chrono::steady_clock::now();
+  auto handle = client_->StartWorkflow(o, "ActivityCancelWorkflow");
+  std::this_thread::sleep_for(3s);  // let the activity start and heartbeat
+  handle.Cancel();
+  EXPECT_EQ(handle.Result<std::string>(), "cancelled");
+  EXPECT_LT(std::chrono::steady_clock::now() - t0, std::chrono::seconds(30));
   worker.Stop();
 }
 

@@ -129,10 +129,13 @@ sel.Select();
 ```
 
 When the workflow is cancelled, `AwaitCancellation` completes, the selector takes
-that branch, and the workflow cancels its timer and finishes promptly. Activity
-and child-workflow cancellation are not wired yet — the activity *side* is exposed
-(`activity::Context::IsCancelled` observes a server cancel via heartbeat), but the
-workflow→activity `RequestCancelActivityTask` trigger is the remaining piece.
+that branch, and the workflow cancels its operation and finishes promptly. The
+same pattern cancels an **activity**: race `ctx.ExecuteActivity<…>()` against
+`AwaitCancellation`, call `act.Cancel()` on cancel (which sends
+`RequestCancelActivityTask`), and the activity observes the request via
+`activity::Context::IsCancelled()` in its heartbeat loop and returns. Child-workflow
+cancellation and automatic propagation (cancelling every in-flight operation
+without wiring it by hand) are the remaining pieces.
 
 ## Replay testing
 
