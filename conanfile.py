@@ -13,9 +13,11 @@
 #
 # Or package the SDK itself:  conan create . --build=missing
 #
-# NOTE: the protobuf/gRPC versions below are a known-compatible ConanCenter pair;
-# bump them together if you need a newer toolchain (gRPC pins the protobuf it was
-# built against).
+# NOTE: protobuf must be new enough to escape C++-keyword namespaces — the
+# temporal protos declare `package temporal.api.namespace.v1` and `…export.v1`,
+# and `namespace`/`export` are C++ keywords. protoc < 27 emits them verbatim
+# (uncompilable); protoc 27 (protobuf 5.27) renders `namespace_`/`export_`.
+# gRPC pins the protobuf it was built against, so bump the pair together.
 from conan import ConanFile
 from conan.tools.cmake import CMake, CMakeToolchain, CMakeDeps, cmake_layout
 
@@ -52,8 +54,8 @@ class TemporalCppConan(ConanFile):
     def requirements(self):
         # PUBLIC deps of the installed temporal::sdk archive: their headers and
         # symbols are part of the SDK's interface, so consumers need them too.
-        self.requires("grpc/1.54.3", transitive_headers=True, transitive_libs=True)
-        self.requires("protobuf/3.21.12", transitive_headers=True, transitive_libs=True)
+        self.requires("grpc/1.67.1", transitive_headers=True, transitive_libs=True)
+        self.requires("protobuf/5.27.0", transitive_headers=True, transitive_libs=True)
         self.requires("nlohmann_json/3.11.3", transitive_headers=True)
 
     def build_requirements(self):
