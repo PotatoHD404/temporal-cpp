@@ -52,8 +52,11 @@ priority/dependency.
   runs before acceptance, and a throw rejects the update with an ephemeral `Rejection` protocol
   message (no command, so nothing is written to history). **Replay re-application** of accepted
   updates after a cache eviction remains.
-- Richer **cancellation scopes** (current cancellation is observe-only via `IsCancelled()`) and
-  selector **channel cases** (the current `Selector` supports future cases).
+- **Cancellation**: timer cancellation ✅ via `Future::Cancel()` (emits `CancelTimer`, resolves the
+  future, replays deterministically). Remaining: activity/child-workflow cancellation (needs
+  activity-side cancel observation) and workflow→operation propagation; workflow-level cancel is
+  still observe-only via `IsCancelled()`. Plus selector **channel cases** (the current `Selector`
+  supports future cases).
 - **SideEffect** ✅ + **`GetVersion`** versioning ✅ — marker record/replay (RecordMarker command;
   SideEffect keyed by call order, Version by change id). MutableSideEffect remaining.
 - **Local activities**.

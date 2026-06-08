@@ -60,7 +60,7 @@ cache. This page is the honest accounting.
 | Child workflows | ✅ | basic; no parent-close-policy / cancel / signal-child |
 | Continue-as-new | ✅ | |
 | Observe cancellation (`IsCancelled`) | ✅ | |
-| Cancellation scopes / propagation | ❌ | not propagated to activities/timers |
+| Cancellation scopes / propagation | 🟡 | timer `Future::Cancel` ✅; activity/child cancel + propagation ❌ |
 | `GetVersion` / patching | ✅ | marker-based; `kDefaultVersion` on pre-version history |
 | SideEffect / MutableSideEffect | 🟡 | `SideEffect` ✅ (marker record/replay); MutableSideEffect ❌ |
 | Local activities | ❌ | |
@@ -121,8 +121,9 @@ Rough priority order (see the repo's `docs/ROADMAP.md` for detail):
 1. **Determinism hardening** — ✅ non-determinism detection (commands matched to history on
    replay); remaining: history pagination, bounded sticky-cache LRU, heartbeat throttling + cancel
    detection.
-2. **Workflow feature surface** — ✅ `SideEffect` + `GetVersion` + update validators; remaining:
-   richer cancellation scopes, selector channel cases, MutableSideEffect, local activities.
+2. **Workflow feature surface** — ✅ `SideEffect` + `GetVersion` + update validators + timer
+   cancellation (`Future::Cancel`); remaining: activity/child cancel + propagation, selector channel
+   cases, MutableSideEffect, local activities.
 3. **Production concerns** — TLS/mTLS + API-key auth, interceptors, metrics & tracing,
    proto/protoJSON converters + payload codecs, worker tuning.
 4. **Breadth** — ✅ replay/test framework (`Worker::ReplayWorkflowHistory` +

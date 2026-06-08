@@ -56,6 +56,7 @@ struct ActivityOutcome {
 struct TimerOutcome {
   bool started = false;
   bool fired = false;
+  bool cancelled = false;
 };
 
 // Outcome of a child workflow, keyed by the (parent-assigned) child workflow_id.
@@ -148,6 +149,12 @@ Prescan ScanHistory(const hist::History& history) {
       case enums::EVENT_TYPE_TIMER_FIRED:
         ps.timers[ev.timer_fired_event_attributes().timer_id()].fired = true;
         break;
+      case enums::EVENT_TYPE_TIMER_CANCELED: {
+        const auto& t = ev.timer_canceled_event_attributes();
+        ps.timers[t.timer_id()].cancelled = true;
+        ps.commands.push_back({CommandEvent::Kind::CancelTimer, t.timer_id(), ""});
+        break;
+      }
       case enums::EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED: {
         const auto& c = ev.start_child_workflow_execution_initiated_event_attributes();
         ps.children[c.workflow_id()].initiated = true;
@@ -338,14 +345,36 @@ class WorkflowRunner final : public WorkflowOutbound {
     const std::string id = "t" + std::to_string(timer_seq_++);
     produced_commands_.push_back({CommandEvent::Kind::Timer, id, ""});
     auto state = std::make_shared<FutureState>();
+    state->op = FutureState::Op::Timer;
+    state->op_id = id;
     const auto it = scan_.timers.find(id);
     if (it != scan_.timers.end() && it->second.started) {
-      state->ready = it->second.fired;
+      state->ready = it->second.fired;  // a cancelled timer is resolved by the workflow's Cancel()
     } else {
       EmitStartTimer(id, duration);
     }
     timer_futures_[id] = state;
     return state;
+  }
+
+  void Cancel(const std::shared_ptr<FutureState>& state) override {
+    if (!state || state->cancelled) {
+      return;
+    }
+    if (state->op != FutureState::Op::Timer) {
+      logger_->Warn("cancellation is only supported for timers so far",
+                    {log::F("op_id", state->op_id)});
+      return;
+    }
+    produced_commands_.push_back({CommandEvent::Kind::CancelTimer, state->op_id, ""});
+    // Emit the command only if the cancel isn't already recorded in history.
+    const auto it = scan_.timers.find(state->op_id);
+    const bool already_cancelled = it != scan_.timers.end() && it->second.cancelled;
+    if (!already_cancelled) {
+      EmitCancelTimer(state->op_id);
+    }
+    state->ready = true;
+    state->cancelled = true;
   }
 
   std::shared_ptr<FutureState> StartChildWorkflow(std::string_view workflow_type,
@@ -556,6 +585,14 @@ class WorkflowRunner final : public WorkflowOutbound {
           }
           break;
         }
+        case enums::EVENT_TYPE_TIMER_CANCELED: {
+          const auto it = timer_futures_.find(ev.timer_canceled_event_attributes().timer_id());
+          if (it != timer_futures_.end()) {
+            it->second->ready = true;
+            it->second->cancelled = true;
+          }
+          break;
+        }
         case enums::EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED: {
           const auto& a = ev.child_workflow_execution_completed_event_attributes();
           const auto it = child_futures_.find(a.workflow_execution().workflow_id());
@@ -629,6 +666,13 @@ class WorkflowRunner final : public WorkflowOutbound {
     auto* attr = c.mutable_start_timer_command_attributes();
     attr->set_timer_id(id);
     *attr->mutable_start_to_fire_timeout() = ToProtoDuration(duration);
+    commands_.push_back(std::move(c));
+  }
+
+  void EmitCancelTimer(const std::string& id) {
+    cmd::Command c;
+    c.set_command_type(enums::COMMAND_TYPE_CANCEL_TIMER);
+    c.mutable_cancel_timer_command_attributes()->set_timer_id(id);
     commands_.push_back(std::move(c));
   }
 

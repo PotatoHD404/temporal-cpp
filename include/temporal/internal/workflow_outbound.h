@@ -29,9 +29,15 @@ namespace internal {
 struct FutureState {
   bool ready = false;
   bool failed = false;
+  bool cancelled = false;
   Payloads result;  // success payloads (activity: 1, timer: 0)
   std::string failure_type;
   std::string failure_message;
+  // What operation backs this future, so it can be cancelled by emitting the
+  // right command. Set by the scheduling call; only timers are cancellable today.
+  enum class Op : unsigned char { None, Timer, Activity, ChildWorkflow };
+  Op op = Op::None;
+  std::string op_id;
 };
 
 // A registered query handler, already adapted to operate on payloads (the
@@ -74,6 +80,11 @@ class WorkflowOutbound {
   // Suspend the workflow unconditionally until the next event/task (used by
   // signal channels and selectors when nothing is ready).
   virtual void Park() = 0;
+
+  // Request cancellation of the operation backing `state`. Today this supports
+  // timers: it emits a CancelTimer command (unless already cancelled in history)
+  // and resolves the future as cancelled so an awaiter unblocks immediately.
+  virtual void Cancel(const std::shared_ptr<FutureState>& state) = 0;
 
   // Consume the next buffered signal for `name` into `out`, advancing a
   // deterministic per-name cursor; returns false if none remain this run.

@@ -23,6 +23,12 @@ class Future {
 
   bool IsReady() const { return state_->ready; }
 
+  // Request cancellation of the underlying operation (timers today). After this,
+  // Get() unblocks immediately (the operation is treated as cancelled) rather
+  // than waiting for it to complete. Deterministic: it emits a cancel command
+  // the workflow must reproduce on replay.
+  void Cancel() { env_->Cancel(state_); }
+
   T Get() {
     env_->Block(state_);  // throws internal::WorkflowBlocked if not yet ready
     if (state_->failed) {

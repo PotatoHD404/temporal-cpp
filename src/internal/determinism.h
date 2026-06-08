@@ -21,6 +21,7 @@ struct CommandEvent {
   enum class Kind : std::uint8_t {
     Activity,           // ScheduleActivityTask <-> ActivityTaskScheduled
     Timer,              // StartTimer           <-> TimerStarted
+    CancelTimer,        // CancelTimer          <-> TimerCanceled
     ChildWorkflow,      // StartChildWorkflow   <-> StartChildWorkflowExecutionInitiated
     Marker,             // RecordMarker         <-> MarkerRecorded
     CompleteWorkflow,   // CompleteWorkflowExecution  <-> WorkflowExecutionCompleted
@@ -39,6 +40,8 @@ inline const char* CommandKindName(CommandEvent::Kind k) {
       return "ScheduleActivity";
     case CommandEvent::Kind::Timer:
       return "StartTimer";
+    case CommandEvent::Kind::CancelTimer:
+      return "CancelTimer";
     case CommandEvent::Kind::ChildWorkflow:
       return "StartChildWorkflow";
     case CommandEvent::Kind::Marker:
@@ -65,6 +68,7 @@ inline bool CommandMatchesEvent(const CommandEvent& produced, const CommandEvent
     case CommandEvent::Kind::ChildWorkflow:
       return produced.id == expected.id && produced.name == expected.name;
     case CommandEvent::Kind::Timer:
+    case CommandEvent::Kind::CancelTimer:
     case CommandEvent::Kind::Marker:
       return produced.id == expected.id;
     case CommandEvent::Kind::CompleteWorkflow:

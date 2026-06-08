@@ -59,6 +59,13 @@ class FakeEnv : public internal::WorkflowOutbound {
 
   void Park() override { throw FakeSuspend{}; }
 
+  void Cancel(const std::shared_ptr<internal::FutureState>& state) override {
+    if (state) {
+      state->ready = true;
+      state->cancelled = true;
+    }
+  }
+
   void RegisterQueryHandler(std::string, internal::QueryFn) override {}
 
   void RegisterUpdateHandler(std::string, internal::QueryFn) override {}
@@ -317,6 +324,16 @@ TEST(WorkflowRuntime, UpdateValidatorWrapperRejectsViaThrow) {
   ASSERT_TRUE(env.update_validator != nullptr);
   EXPECT_NO_THROW(env.update_validator(dc->ToPayloads(5)));
   EXPECT_THROW(env.update_validator(dc->ToPayloads(-1)), std::exception);
+}
+
+TEST(WorkflowRuntime, FutureCancelResolvesTheUnderlyingState) {
+  FakeEnv env;
+  const auto dc = DataConverter::Default();
+  workflow::Context ctx(&env, dc.get());
+  auto timer = ctx.NewTimer(std::chrono::seconds(60));
+  EXPECT_FALSE(timer.IsReady());
+  timer.Cancel();
+  EXPECT_TRUE(timer.IsReady());  // Future::Cancel routed through env->Cancel()
 }
 
 }  // namespace

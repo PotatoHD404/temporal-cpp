@@ -188,6 +188,15 @@ int ReplayFwV2(temporal::workflow::Context& ctx) {
   return ctx.ExecuteActivity<int>(o, "Multiply", 41).Get();  // different activity type
 }
 
+// Starts a long timer then immediately cancels it. Future::Cancel resolves the
+// timer so the workflow finishes at once instead of waiting it out.
+std::string TimerCancelWorkflow(temporal::workflow::Context& ctx) {
+  auto timer = ctx.NewTimer(60s);
+  timer.Cancel();
+  timer.Get();  // returns immediately (cancelled), not after 60s
+  return "cancelled";
+}
+
 // Runs longer than its heartbeat timeout but heartbeats to stay alive.
 std::string HeartbeatActivity(temporal::activity::Context& ctx, int) {
   for (int i = 0; i < 5; ++i) {
@@ -653,6 +662,32 @@ TEST_F(IntegrationTest, ReplayFrameworkDetectsNonDeterministicChange) {
     replayer.RegisterWorkflow("ReplayFwWorkflow", ReplayFwV2);
     EXPECT_THROW(replayer.ReplayWorkflowHistory(history_json), std::exception);
   }
+}
+
+// Cancelling a timer resolves it immediately: a workflow that starts a 60s timer
+// and cancels it completes in seconds, and its StartTimer+CancelTimer history
+// replays deterministically.
+TEST_F(IntegrationTest, TimerCancellationCompletesFastAndReplays) {
+  const auto tq = UniqueTaskQueue("timer-cancel");
+  std::string history_json;
+  {
+    temporal::worker::Worker worker(*client_, tq);
+    worker.RegisterWorkflow("TimerCancelWorkflow", TimerCancelWorkflow);
+    worker.Start();
+    temporal::StartWorkflowOptions o;
+    o.task_queue = tq;
+    const auto t0 = std::chrono::steady_clock::now();
+    auto handle = client_->StartWorkflow(o, "TimerCancelWorkflow");
+    EXPECT_EQ(handle.Result<std::string>(), "cancelled");
+    // A non-cancelled 60s timer would block Result ~60s; cancellation finishes fast.
+    EXPECT_LT(std::chrono::steady_clock::now() - t0, std::chrono::seconds(20));
+    history_json = handle.FetchHistoryJson();
+    worker.Stop();
+  }
+  // The recorded StartTimer + CancelTimer history replays deterministically.
+  temporal::worker::Worker replayer(*client_, tq);
+  replayer.RegisterWorkflow("TimerCancelWorkflow", TimerCancelWorkflow);
+  EXPECT_NO_THROW(replayer.ReplayWorkflowHistory(history_json));
 }
 
 }  // namespace
