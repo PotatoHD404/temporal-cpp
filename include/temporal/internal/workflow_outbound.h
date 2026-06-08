@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -94,6 +95,10 @@ class WorkflowOutbound {
   // SignalExternalWorkflowExecution.
   virtual void SignalExternalWorkflow(std::string_view workflow_id, std::string_view signal_name,
                                       const Payloads& input) = 0;
+
+  // Upsert indexed search attributes on this workflow (emits
+  // UpsertWorkflowSearchAttributes).
+  virtual void UpsertSearchAttributes(const std::map<std::string, Payload>& attributes) = 0;
 
   // Consume the next buffered signal for `name` into `out`, advancing a
   // deterministic per-name cursor; returns false if none remain this run.

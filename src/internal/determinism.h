@@ -26,6 +26,7 @@ struct CommandEvent {
     ChildWorkflow,      // StartChildWorkflow   <-> StartChildWorkflowExecutionInitiated
     RequestCancelExternalWorkflow,  // RequestCancelExternalWorkflowExecution <-> ...Initiated
     SignalExternalWorkflow,  // SignalExternalWorkflowExecution <-> ...Initiated
+    UpsertSearchAttributes,  // UpsertWorkflowSearchAttributes <-> ...SearchAttributes event
     Marker,             // RecordMarker         <-> MarkerRecorded
     CompleteWorkflow,   // CompleteWorkflowExecution  <-> WorkflowExecutionCompleted
     FailWorkflow,       // FailWorkflowExecution      <-> WorkflowExecutionFailed
@@ -53,6 +54,8 @@ inline const char* CommandKindName(CommandEvent::Kind k) {
       return "RequestCancelExternalWorkflowExecution";
     case CommandEvent::Kind::SignalExternalWorkflow:
       return "SignalExternalWorkflowExecution";
+    case CommandEvent::Kind::UpsertSearchAttributes:
+      return "UpsertWorkflowSearchAttributes";
     case CommandEvent::Kind::Marker:
       return "RecordMarker";
     case CommandEvent::Kind::CompleteWorkflow:
@@ -79,6 +82,7 @@ inline bool CommandMatchesEvent(const CommandEvent& produced, const CommandEvent
     case CommandEvent::Kind::RequestCancelActivity:
     case CommandEvent::Kind::RequestCancelExternalWorkflow:
     case CommandEvent::Kind::SignalExternalWorkflow:
+    case CommandEvent::Kind::UpsertSearchAttributes:  // no id; ordered position carries it
     case CommandEvent::Kind::Timer:
     case CommandEvent::Kind::CancelTimer:
     case CommandEvent::Kind::Marker:

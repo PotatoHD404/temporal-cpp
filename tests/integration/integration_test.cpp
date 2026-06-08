@@ -242,6 +242,12 @@ std::string SignalExternalWf(temporal::workflow::Context& ctx, std::string targe
   return "done";
 }
 
+// Upserts an indexed search attribute (value passed as arg), then returns.
+std::string UpsertSaWorkflow(temporal::workflow::Context& ctx, std::string val) {
+  ctx.UpsertSearchAttributes({{"ItestKeyword", temporal::sa::Keyword(val)}});
+  return "upserted";
+}
+
 // Heartbeats until it observes a server cancel request, then returns "cancelled".
 std::string CancellableActivity(temporal::activity::Context& ctx, int) {
   for (int i = 0; i < 100; ++i) {
@@ -1013,6 +1019,35 @@ TEST_F(IntegrationTest, StartTimeSearchAttributeIsQueryable) {
   o.search_attributes["ItestKeyword"] = temporal::sa::Keyword(val);
   auto handle = client_->StartWorkflow(o, "SleepWorkflow", 0);
   EXPECT_EQ(handle.Result<std::string>(), "slept");
+
+  const std::string query = "ItestKeyword = '" + val + "'";
+  std::vector<temporal::client::WorkflowDescription> listed;
+  for (int i = 0; i < 40; ++i) {  // visibility is eventually consistent
+    listed = client_->ListWorkflows(query);
+    if (!listed.empty()) {
+      break;
+    }
+    std::this_thread::sleep_for(250ms);
+  }
+  ASSERT_EQ(listed.size(), 1U);
+  EXPECT_EQ(listed[0].run_id, handle.run_id());
+  worker.Stop();
+}
+
+// A workflow upserts an indexed search attribute, which a visibility query finds.
+TEST_F(IntegrationTest, WorkflowUpsertsSearchAttribute) {
+  std::system("temporal operator search-attribute create --name ItestKeyword --type Keyword "
+              ">/dev/null 2>&1");
+  std::this_thread::sleep_for(1s);
+  const auto tq = UniqueTaskQueue("upsert-sa");
+  temporal::worker::Worker worker(*client_, tq);
+  worker.RegisterWorkflow("UpsertSaWorkflow", UpsertSaWorkflow);
+  worker.Start();
+  const std::string val = "up-" + std::to_string(std::random_device{}());
+  temporal::StartWorkflowOptions o;
+  o.task_queue = tq;
+  auto handle = client_->StartWorkflow(o, "UpsertSaWorkflow", val);
+  EXPECT_EQ(handle.Result<std::string>(), "upserted");
 
   const std::string query = "ItestKeyword = '" + val + "'";
   std::vector<temporal::client::WorkflowDescription> listed;

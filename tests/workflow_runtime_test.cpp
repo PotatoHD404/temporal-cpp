@@ -70,6 +70,8 @@ class FakeEnv : public internal::WorkflowOutbound {
 
   void SignalExternalWorkflow(std::string_view, std::string_view, const Payloads&) override {}
 
+  void UpsertSearchAttributes(const std::map<std::string, Payload>&) override {}
+
   void RegisterQueryHandler(std::string, internal::QueryFn) override {}
 
   void RegisterUpdateHandler(std::string, internal::QueryFn) override {}

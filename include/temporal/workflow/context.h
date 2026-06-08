@@ -107,6 +107,12 @@ class Context {
     env_->SignalExternalWorkflow(workflow_id, signal_name, converter_->ToPayloads(args...));
   }
 
+  // Upsert indexed search attributes on this workflow. Build typed values with
+  // the `temporal::sa::` helpers. Mirrors `workflow.UpsertSearchAttributes`.
+  void UpsertSearchAttributes(const std::map<std::string, Payload>& attributes) {
+    env_->UpsertSearchAttributes(attributes);
+  }
+
   // Register a query handler `R Fn(Args...)`, à la `workflow.SetQueryHandler`.
   // Handlers must be read-only (no activities/timers): they run against live
   // workflow state when a query arrives. Re-registering replaces the handler.

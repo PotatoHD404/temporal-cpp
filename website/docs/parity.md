@@ -65,7 +65,7 @@ cache. This page is the honest accounting.
 | SideEffect / MutableSideEffect | 🟡 | `SideEffect` ✅ (marker record/replay); MutableSideEffect ❌ |
 | Local activities | ❌ | |
 | External-workflow signal/cancel | ✅ | `CancelExternalWorkflow` + `SignalExternalWorkflow` |
-| Search attributes / memo / upsert | 🟡 | memo ✅; start-time search attributes ✅ (`sa::` typed helpers); workflow upsert ❌ |
+| Search attributes / memo / upsert | ✅ | memo ✅; start-time + workflow `UpsertSearchAttributes` ✅ (`sa::` typed helpers) |
 | Header / context propagation | ❌ | |
 
 ## Activities
@@ -127,8 +127,7 @@ Rough priority order (see the repo's `docs/ROADMAP.md` for detail):
 3. **Production concerns** — TLS/mTLS + API-key auth, interceptors, metrics & tracing,
    proto/protoJSON converters + payload codecs, worker tuning.
 4. **Breadth** — ✅ replay/test framework + 🟡 schedules (create/describe/delete); remaining: fuller
-   schedules (update/list/trigger/pause), Nexus, worker versioning, search attributes, the broader
-   client surface.
+   schedules (update/list/trigger/pause), Nexus, worker versioning, the broader client surface.
 
 If a capability you need is in the ❌ column, it genuinely isn't there yet — please don't assume
 otherwise from the working core.

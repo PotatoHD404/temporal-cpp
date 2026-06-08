@@ -79,6 +79,7 @@ struct Prescan {
   std::unordered_map<std::string, std::vector<Payloads>> signals;  // keyed by signal name
   bool cancel_requested = false;
   int ext_signals_initiated = 0;  // count of SignalExternalWorkflow commands in history
+  int upserts_initiated = 0;      // count of UpsertSearchAttributes commands in history
   // For incremental (sticky) continuations: correlate completion events to the
   // activity_id of their schedule, and remember how far history has been consumed.
   std::unordered_map<std::int64_t, std::string> sched_event_to_activity;
@@ -217,6 +218,11 @@ Prescan ScanHistory(const hist::History& history) {
         ps.commands.push_back(
             {CommandEvent::Kind::SignalExternalWorkflow, a.workflow_execution().workflow_id(), ""});
         ++ps.ext_signals_initiated;
+        break;
+      }
+      case enums::EVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES: {
+        ps.commands.push_back({CommandEvent::Kind::UpsertSearchAttributes, "", ""});
+        ++ps.upserts_initiated;
         break;
       }
       case enums::EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED: {
@@ -477,6 +483,14 @@ class WorkflowRunner final : public WorkflowOutbound {
         {CommandEvent::Kind::SignalExternalWorkflow, std::string(workflow_id), ""});
     if (ext_signal_seq_++ >= static_cast<std::size_t>(scan_.ext_signals_initiated)) {
       EmitSignalExternalWorkflow(workflow_id, signal_name, input);
+    }
+  }
+
+  void UpsertSearchAttributes(const std::map<std::string, Payload>& attributes) override {
+    // Indexed search-attribute upsert; count-keyed so a full replay doesn't re-send.
+    produced_commands_.push_back({CommandEvent::Kind::UpsertSearchAttributes, "", ""});
+    if (upsert_seq_++ >= static_cast<std::size_t>(scan_.upserts_initiated)) {
+      EmitUpsertSearchAttributes(attributes);
     }
   }
 
@@ -879,6 +893,16 @@ class WorkflowRunner final : public WorkflowOutbound {
     commands_.push_back(std::move(c));
   }
 
+  void EmitUpsertSearchAttributes(const std::map<std::string, Payload>& attributes) {
+    cmd::Command c;
+    c.set_command_type(enums::COMMAND_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES);
+    auto* attr = c.mutable_upsert_workflow_search_attributes_command_attributes();
+    for (const auto& [key, value] : attributes) {
+      (*attr->mutable_search_attributes()->mutable_indexed_fields())[key] = ToProtoPayload(value);
+    }
+    commands_.push_back(std::move(c));
+  }
+
   void EmitRecordMarker(const std::string& name,
                         const std::vector<std::pair<std::string, Payloads>>& details) {
     cmd::Command c;
@@ -917,6 +941,7 @@ class WorkflowRunner final : public WorkflowOutbound {
   int child_seq_ = 0;
   std::size_t side_effect_seq_ = 0;
   std::size_t ext_signal_seq_ = 0;
+  std::size_t upsert_seq_ = 0;
   std::unordered_map<std::string, int> change_versions_;
   std::unique_ptr<Coroutine> coroutine_;  // declared last -> destroyed first (tears down thread)
 };
