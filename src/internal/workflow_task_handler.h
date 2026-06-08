@@ -3,9 +3,11 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
+#include "temporal/api/history/v1/message.pb.h"
 #include "temporal/api/workflowservice/v1/request_response.pb.h"
 
 #include <temporal/converter/data_converter.h>
@@ -15,6 +17,7 @@
 namespace temporal::internal {
 
 namespace wsv = ::temporal::api::workflowservice::v1;
+namespace hist = ::temporal::api::history::v1;
 
 class GrpcClient;
 
@@ -34,6 +37,11 @@ class WorkflowTaskHandler {
   bool has_workflows() const { return !workflows_.empty(); }
 
   void Handle(const wsv::PollWorkflowTaskQueueResponse& task);
+
+  // Replay a recorded history against the registered workflow and return the
+  // first non-determinism mismatch, or nullopt if the replay is consistent. Used
+  // by the replay/test framework; makes no RPCs.
+  std::optional<std::string> ReplayHistory(const hist::History& history);
 
   // Test/inspection counters: continuations served from the cache vs. full replays.
   long cache_hits() const { return cache_hits_.load(); }

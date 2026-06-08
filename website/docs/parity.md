@@ -110,7 +110,7 @@ cache. This page is the honest accounting.
 | Metrics | ❌ | |
 | Tracing / OpenTelemetry | ❌ | |
 | Structured logging | ✅ | pluggable `log::Logger` |
-| Test framework (time-skip, replayer) | ❌ | |
+| Test framework (time-skip, replayer) | 🟡 | replayer ✅ (`Worker::ReplayWorkflowHistory`); time-skip ❌ |
 | Schedules | ❌ | |
 | Nexus operations | ❌ | |
 
@@ -125,8 +125,9 @@ Rough priority order (see the repo's `docs/ROADMAP.md` for detail):
    richer cancellation scopes, selector channel cases, MutableSideEffect, local activities.
 3. **Production concerns** — TLS/mTLS + API-key auth, interceptors, metrics & tracing,
    proto/protoJSON converters + payload codecs, worker tuning.
-4. **Breadth** — schedules, Nexus, worker versioning, a replay/test framework, search attributes,
-   the broader client surface.
+4. **Breadth** — ✅ replay/test framework (`Worker::ReplayWorkflowHistory` +
+   `WorkflowHandle::FetchHistoryJson`); remaining: schedules, Nexus, worker versioning, search
+   attributes, the broader client surface.
 
 If a capability you need is in the ❌ column, it genuinely isn't there yet — please don't assume
 otherwise from the working core.

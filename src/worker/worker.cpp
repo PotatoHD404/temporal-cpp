@@ -29,6 +29,10 @@ void Worker::Run() { impl_->Run(); }
 
 void Worker::Stop() { impl_->Stop(); }
 
+void Worker::ReplayWorkflowHistory(const std::string& history_json) {
+  impl_->ReplayWorkflowHistory(history_json);
+}
+
 long Worker::cache_hits() const { return impl_->cache_hits(); }
 
 long Worker::replays() const { return impl_->replays(); }

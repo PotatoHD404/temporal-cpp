@@ -64,6 +64,13 @@ class Worker {
   void Run();    // start pollers and block until SIGINT or Stop()
   void Stop();   // signal pollers to stop and join
 
+  // Replay a recorded workflow history (Temporal's JSON, e.g. from
+  // `temporal workflow show -o json` or WorkflowHandle::FetchHistoryJson) against
+  // this worker's registered workflow code, WITHOUT contacting a server. Throws
+  // if the workflow's replayed commands diverge from the recorded history — the
+  // way to catch non-deterministic changes to a workflow in a unit test.
+  void ReplayWorkflowHistory(const std::string& history_json);
+
   // Observability: workflow tasks served as sticky-cache continuations vs. full
   // replays since the worker started.
   long cache_hits() const;

@@ -753,6 +753,38 @@ void WorkflowTaskHandler::Register(std::string name, worker::WorkflowFn fn) {
   workflows_.insert_or_assign(std::move(name), std::move(fn));
 }
 
+std::optional<std::string> WorkflowTaskHandler::ReplayHistory(const hist::History& history) {
+  std::string workflow_type;
+  for (const auto& ev : history.events()) {
+    if (ev.event_type() == enums::EVENT_TYPE_WORKFLOW_EXECUTION_STARTED) {
+      workflow_type = ev.workflow_execution_started_event_attributes().workflow_type().name();
+      break;
+    }
+  }
+  if (workflow_type.empty()) {
+    throw ApplicationError("history has no WorkflowExecutionStarted event", "ReplayError");
+  }
+  const auto wf = workflows_.find(workflow_type);
+  if (wf == workflows_.end()) {
+    throw ApplicationError("no workflow registered for type: " + workflow_type, "ReplayError");
+  }
+
+  workflow::WorkflowInfo info;
+  info.workflow_type = workflow_type;
+  info.workflow_id = "replay";
+  info.task_queue = task_queue_;
+  info.ns = grpc_->ns();
+
+  // Drive a fresh runner through the full history (always replaying) and report
+  // whether the workflow reproduced the recorded commands in order.
+  Prescan scan = ScanHistory(history);
+  Payloads input = scan.input;
+  auto runner = std::make_shared<WorkflowRunner>(info, logger_, /*is_replaying=*/true, std::move(scan),
+                                                 converter_.get(), wf->second, std::move(input));
+  runner->Run();
+  return runner->CheckDeterminism();
+}
+
 void WorkflowTaskHandler::Handle(const wsv::PollWorkflowTaskQueueResponse& task) {
   workflow::WorkflowInfo info;
   info.workflow_id = task.workflow_execution().workflow_id();

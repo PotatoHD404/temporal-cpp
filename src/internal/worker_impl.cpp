@@ -4,13 +4,17 @@
 #include <chrono>
 #include <csignal>
 #include <exception>
+#include <string>
 #include <thread>
 #include <utility>
 
+#include "google/protobuf/util/json_util.h"
 #include "temporal/api/enums/v1/task_queue.pb.h"
 
 #include "internal/grpc_client.h"
 #include "internal/proto_util.h"
+
+#include <temporal/common/errors.h>
 
 namespace temporal::internal {
 namespace {
@@ -40,6 +44,18 @@ WorkerImpl::WorkerImpl(std::shared_ptr<GrpcClient> grpc, std::shared_ptr<DataCon
       activity_handler_(grpc_.get(), converter_, logger_, task_queue_) {}
 
 WorkerImpl::~WorkerImpl() { Stop(); }
+
+void WorkerImpl::ReplayWorkflowHistory(const std::string& history_json) {
+  hist::History history;
+  const auto status = google::protobuf::util::JsonStringToMessage(history_json, &history);
+  if (!status.ok()) {
+    throw ApplicationError("failed to parse history JSON: " + std::string(status.message()),
+                           "ReplayError");
+  }
+  if (const auto mismatch = workflow_handler_.ReplayHistory(history)) {
+    throw ApplicationError(*mismatch, "NonDeterministicError");
+  }
+}
 
 void WorkerImpl::RegisterWorkflow(std::string name, worker::WorkflowFn fn) {
   workflow_handler_.Register(std::move(name), std::move(fn));

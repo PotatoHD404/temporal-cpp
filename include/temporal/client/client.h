@@ -68,6 +68,10 @@ class WorkflowHandle {
   void Cancel();
   void Terminate(std::string_view reason = "");
 
+  // Fetch this workflow's full history as Temporal JSON (pages internally). Feed
+  // it to Worker::ReplayWorkflowHistory to test a workflow against real history.
+  std::string FetchHistoryJson();
+
  private:
   Payloads ResultPayloads();  // non-template; defined in client.cpp
   Payloads QueryPayloads(std::string_view query_type, const Payloads& args);

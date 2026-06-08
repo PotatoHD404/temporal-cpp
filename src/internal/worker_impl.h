@@ -36,6 +36,10 @@ class WorkerImpl {
   void Run();
   void Stop();
 
+  // Replay a recorded history (Temporal JSON) against the registered workflow;
+  // throws if the replay is non-deterministic. Makes no RPCs.
+  void ReplayWorkflowHistory(const std::string& history_json);
+
   long cache_hits() const { return workflow_handler_.cache_hits(); }
   long replays() const { return workflow_handler_.replays(); }
 

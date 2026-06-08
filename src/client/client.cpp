@@ -4,6 +4,7 @@
 #include <string_view>
 #include <utility>
 
+#include "google/protobuf/util/json_util.h"
 #include "temporal/api/enums/v1/event_type.pb.h"
 #include "temporal/api/enums/v1/update.pb.h"
 #include "temporal/api/history/v1/message.pb.h"
@@ -28,6 +29,34 @@ WorkflowHandle::WorkflowHandle(std::shared_ptr<internal::GrpcClient> grpc,
       ns_(std::move(ns)),
       workflow_id_(std::move(workflow_id)),
       run_id_(std::move(run_id)) {}
+
+std::string WorkflowHandle::FetchHistoryJson() {
+  ::temporal::api::history::v1::History full;
+  std::string token;
+  for (;;) {
+    internal::wsv::GetWorkflowExecutionHistoryRequest req;
+    req.set_namespace_(ns_);
+    req.mutable_execution()->set_workflow_id(workflow_id_);
+    if (!run_id_.empty()) {
+      req.mutable_execution()->set_run_id(run_id_);
+    }
+    req.set_skip_archival(true);
+    if (!token.empty()) {
+      req.set_next_page_token(token);
+    }
+    const auto resp = grpc_->GetWorkflowExecutionHistory(req);
+    for (const auto& ev : resp.history().events()) {
+      *full.add_events() = ev;
+    }
+    token = resp.next_page_token();
+    if (token.empty()) {
+      break;
+    }
+  }
+  std::string json;
+  static_cast<void>(google::protobuf::util::MessageToJsonString(full, &json));
+  return json;
+}
 
 Payloads WorkflowHandle::ResultPayloads() {
   for (;;) {

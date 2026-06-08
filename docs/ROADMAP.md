@@ -71,7 +71,10 @@ priority/dependency.
 - **Schedules** client API.
 - **Nexus** operations.
 - **Worker versioning** / deployments.
-- **Replay/test framework** (deterministic replay of recorded histories in unit tests).
+- **Replay/test framework** ✅ — `Worker::ReplayWorkflowHistory(json)` replays a recorded history
+  offline against the registered workflow code and throws on non-determinism;
+  `WorkflowHandle::FetchHistoryJson()` exports a real history (Temporal JSON). A time-skipping test
+  environment remains.
 - Schema-driven typed workflow/activity stubs; richer error type mapping.
 
 ## Build / packaging

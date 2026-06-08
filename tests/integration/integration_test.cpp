@@ -174,6 +174,20 @@ int ValidatedUpdateWorkflow(temporal::workflow::Context& ctx) {
   return total;
 }
 
+// Two versions of one workflow type for the replay framework: V1 is what ran and
+// produced the recorded history; V2 is an incompatible "code change" (a different
+// activity) that a replay must flag as non-deterministic.
+int ReplayFwV1(temporal::workflow::Context& ctx) {
+  temporal::ActivityOptions o;
+  o.start_to_close_timeout = 10s;
+  return ctx.ExecuteActivity<int>(o, "AddOne", 41).Get();
+}
+int ReplayFwV2(temporal::workflow::Context& ctx) {
+  temporal::ActivityOptions o;
+  o.start_to_close_timeout = 10s;
+  return ctx.ExecuteActivity<int>(o, "Multiply", 41).Get();  // different activity type
+}
+
 // Runs longer than its heartbeat timeout but heartbeats to stay alive.
 std::string HeartbeatActivity(temporal::activity::Context& ctx, int) {
   for (int i = 0; i < 5; ++i) {
@@ -605,6 +619,40 @@ TEST_F(IntegrationTest, UpdateValidatorRejectsInvalidInput) {
   handle.Signal("stop", dc->ToPayloads(std::string("done")));
   EXPECT_EQ(handle.Result<int>(), 13);
   worker.Stop();
+}
+
+// The replay framework: a recorded history replayed against the SAME workflow
+// code is deterministic; replayed against incompatibly-changed code it is caught
+// as non-determinism — all without contacting a server.
+TEST_F(IntegrationTest, ReplayFrameworkDetectsNonDeterministicChange) {
+  const auto tq = UniqueTaskQueue("replay-fw");
+  std::string history_json;
+  {
+    temporal::worker::Worker worker(*client_, tq);
+    worker.RegisterWorkflow("ReplayFwWorkflow", ReplayFwV1);
+    worker.RegisterActivity("AddOne", AddOneActivity);
+    worker.Start();
+    temporal::StartWorkflowOptions o;
+    o.task_queue = tq;
+    auto handle = client_->StartWorkflow(o, "ReplayFwWorkflow");
+    EXPECT_EQ(handle.Result<int>(), 42);
+    history_json = handle.FetchHistoryJson();  // export the real history
+    worker.Stop();
+  }
+  ASSERT_FALSE(history_json.empty());
+
+  // Same code -> deterministic replay (no RPCs; the worker is never started).
+  {
+    temporal::worker::Worker replayer(*client_, tq);
+    replayer.RegisterWorkflow("ReplayFwWorkflow", ReplayFwV1);
+    EXPECT_NO_THROW(replayer.ReplayWorkflowHistory(history_json));
+  }
+  // Changed code (a different activity) -> non-determinism is detected.
+  {
+    temporal::worker::Worker replayer(*client_, tq);
+    replayer.RegisterWorkflow("ReplayFwWorkflow", ReplayFwV2);
+    EXPECT_THROW(replayer.ReplayWorkflowHistory(history_json), std::exception);
+  }
 }
 
 }  // namespace
