@@ -58,6 +58,13 @@ class WorkflowOutbound {
   // Returns if `state` is ready; otherwise throws WorkflowBlocked to suspend.
   virtual void Block(const std::shared_ptr<FutureState>& state) = 0;
 
+  // Consume the next buffered signal for `name` into `out`, advancing a
+  // deterministic per-name cursor; returns false if none remain this run.
+  virtual bool TryConsumeSignal(std::string_view name, Payloads& out) = 0;
+
+  // Whether a cancel has been requested for this workflow execution.
+  virtual bool IsCancelRequested() const = 0;
+
   virtual const workflow::WorkflowInfo& Info() const = 0;
   virtual log::Logger& Logger() const = 0;
   virtual bool IsReplaying() const = 0;

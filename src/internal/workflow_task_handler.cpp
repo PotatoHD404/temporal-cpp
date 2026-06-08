@@ -1,6 +1,7 @@
 #include "internal/workflow_task_handler.h"
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <string>
@@ -47,6 +48,8 @@ struct Prescan {
   Payloads input;
   std::unordered_map<std::string, ActivityOutcome> activities;  // keyed by activity_id
   std::unordered_map<std::string, TimerOutcome> timers;         // keyed by timer_id
+  std::unordered_map<std::string, std::vector<Payloads>> signals;  // keyed by signal name
+  bool cancel_requested = false;
 };
 
 // Walk the event history once, indexing the inputs/outcomes the runner replays
@@ -105,6 +108,14 @@ Prescan ScanHistory(const hist::History& history) {
         break;
       case enums::EVENT_TYPE_TIMER_FIRED:
         ps.timers[ev.timer_fired_event_attributes().timer_id()].fired = true;
+        break;
+      case enums::EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED: {
+        const auto& a = ev.workflow_execution_signaled_event_attributes();
+        ps.signals[a.signal_name()].push_back(FromProtoPayloads(a.input()));
+        break;
+      }
+      case enums::EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED:
+        ps.cancel_requested = true;
         break;
       default:
         break;
@@ -165,6 +176,23 @@ class WorkflowRunner final : public WorkflowOutbound {
     }
   }
 
+  bool TryConsumeSignal(std::string_view name, Payloads& out) override {
+    const std::string key(name);
+    const auto it = scan_.signals.find(key);
+    if (it == scan_.signals.end()) {
+      return false;
+    }
+    std::size_t& cursor = signal_cursor_[key];
+    if (cursor >= it->second.size()) {
+      return false;
+    }
+    out = it->second[cursor];
+    ++cursor;
+    return true;
+  }
+
+  bool IsCancelRequested() const override { return scan_.cancel_requested; }
+
   const workflow::WorkflowInfo& Info() const override { return info_; }
   log::Logger& Logger() const override { return *logger_; }
   bool IsReplaying() const override { return is_replaying_; }
@@ -217,6 +245,7 @@ class WorkflowRunner final : public WorkflowOutbound {
   std::shared_ptr<log::Logger> logger_;
   bool is_replaying_;
   Prescan scan_;
+  std::unordered_map<std::string, std::size_t> signal_cursor_;
   std::vector<cmd::Command> commands_;
   int activity_seq_ = 0;
   int timer_seq_ = 0;

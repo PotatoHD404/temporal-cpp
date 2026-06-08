@@ -58,6 +58,34 @@ std::string LongSleepWorkflow(temporal::workflow::Context& ctx, int) {
   return "done";
 }
 
+// Waits for a "setName" signal, then greets.
+std::string GreetBySignalWorkflow(temporal::workflow::Context& ctx) {
+  return "Hello, " + ctx.GetSignalChannel<std::string>("setName").Receive();
+}
+
+// Counts "input" signals until a "done" signal arrives.
+int CountSignalsWorkflow(temporal::workflow::Context& ctx) {
+  auto signals = ctx.GetSignalChannel<std::string>("input");
+  int count = 0;
+  while (signals.Receive() != "done") {
+    ++count;
+  }
+  return count;
+}
+
+// Waits for signals but bails out if the workflow is cancelled.
+std::string CancellableWorkflow(temporal::workflow::Context& ctx) {
+  auto signals = ctx.GetSignalChannel<std::string>("go");
+  while (true) {
+    if (ctx.IsCancelled()) {
+      return "cancelled";
+    }
+    if (signals.Receive() == "stop") {
+      return "stopped";
+    }
+  }
+}
+
 // ---- harness -------------------------------------------------------------
 std::atomic<int> g_seq{0};
 
@@ -151,8 +179,54 @@ TEST_F(IntegrationTest, TerminateMakesResultThrow) {
   worker.Stop();
 }
 
-// Until workflow-side signal/cancel handling exists, this only asserts the client
-// RPCs succeed against a running workflow (see docs/ROADMAP.md).
+TEST_F(IntegrationTest, SignalDeliveredToWorkflow) {
+  const auto tq = UniqueTaskQueue("signal-greet");
+  temporal::worker::Worker worker(*client_, tq);
+  worker.RegisterWorkflow("GreetBySignalWorkflow", GreetBySignalWorkflow);
+  worker.Start();
+
+  temporal::StartWorkflowOptions o;
+  o.task_queue = tq;
+  auto handle = client_->StartWorkflow(o, "GreetBySignalWorkflow");
+  const auto dc = temporal::DataConverter::Default();
+  handle.Signal("setName", dc->ToPayloads(std::string("World")));
+  EXPECT_EQ(handle.Result<std::string>(), "Hello, World");
+  worker.Stop();
+}
+
+TEST_F(IntegrationTest, MultipleSignalsCountedInOrder) {
+  const auto tq = UniqueTaskQueue("signal-count");
+  temporal::worker::Worker worker(*client_, tq);
+  worker.RegisterWorkflow("CountSignalsWorkflow", CountSignalsWorkflow);
+  worker.Start();
+
+  temporal::StartWorkflowOptions o;
+  o.task_queue = tq;
+  auto handle = client_->StartWorkflow(o, "CountSignalsWorkflow");
+  const auto dc = temporal::DataConverter::Default();
+  handle.Signal("input", dc->ToPayloads(std::string("a")));
+  handle.Signal("input", dc->ToPayloads(std::string("b")));
+  handle.Signal("input", dc->ToPayloads(std::string("done")));
+  EXPECT_EQ(handle.Result<int>(), 2);  // "a" and "b" counted, "done" terminates
+  worker.Stop();
+}
+
+TEST_F(IntegrationTest, CancellationObservedByWorkflow) {
+  const auto tq = UniqueTaskQueue("cancel");
+  temporal::worker::Worker worker(*client_, tq);
+  worker.RegisterWorkflow("CancellableWorkflow", CancellableWorkflow);
+  worker.Start();
+
+  temporal::StartWorkflowOptions o;
+  o.task_queue = tq;
+  auto handle = client_->StartWorkflow(o, "CancellableWorkflow");
+  handle.Cancel();
+  EXPECT_EQ(handle.Result<std::string>(), "cancelled");
+  worker.Stop();
+}
+
+// LongSleepWorkflow ignores signals/cancel, so this only asserts the client RPCs
+// succeed (the reacting cases are covered by the tests above).
 TEST_F(IntegrationTest, SignalAndCancelRpcsSucceed) {
   const auto tq = UniqueTaskQueue("signal");
   temporal::worker::Worker worker(*client_, tq);

@@ -8,6 +8,7 @@
 #include <temporal/converter/data_converter.h>
 #include <temporal/internal/workflow_outbound.h>
 #include <temporal/log/logger.h>
+#include <temporal/workflow/channel.h>
 #include <temporal/workflow/future.h>
 
 namespace temporal::workflow {
@@ -45,6 +46,17 @@ class Context {
 
   // Block the workflow for `duration` (NewTimer + Get).
   void Sleep(std::chrono::nanoseconds duration) { NewTimer(duration).Get(); }
+
+  // Receive signals sent to this workflow under `name`. Mirrors the Go SDK's
+  // `workflow.GetSignalChannel`.
+  template <class T>
+  ReceiveChannel<T> GetSignalChannel(std::string name) {
+    return ReceiveChannel<T>(std::move(name), converter_, env_);
+  }
+
+  // True once a cancel has been requested for this workflow execution. The
+  // workflow decides how to react (finish, clean up, etc.).
+  bool IsCancelled() const { return env_->IsCancelRequested(); }
 
   const WorkflowInfo& GetInfo() const { return env_->Info(); }
   log::Logger& GetLogger() const { return env_->Logger(); }

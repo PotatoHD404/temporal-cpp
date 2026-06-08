@@ -12,17 +12,20 @@ priority/dependency.
   `Start`/`Run`/`Stop`.
 - Workflows: sequential and parallel-await `ExecuteActivity<R>(...)`, timers (`NewTimer`/`Sleep`),
   typed args/results, failure propagation, activity retries (custom `RetryPolicy` honored).
+- Workflows: signals (`GetSignalChannel<T>().Receive()` / `ReceiveAsync`) and workflow cancellation
+  (`IsCancelled()`), reconstructed deterministically from history.
 - Activities: typed execution, application-error failures.
 - Data conversion: Nil / ByteSlice / JSON (nlohmann).
 - Engine: non-sticky history replay, deterministic command/event correlation, block-by-exception
   suspension.
-- Tested: 8 unit tests + 6 end-to-end integration tests (timer, single + parallel activities,
-  activity-failure propagation, RetryPolicy fail-fast, terminate, signal/cancel RPCs) — run against
-  a dev server via `TEMPORAL_INTEGRATION=1`, and in CI.
+- Tested: 11 unit tests + 9 end-to-end integration tests (timer, single + parallel activities,
+  activity-failure propagation, RetryPolicy fail-fast, terminate, signal delivery + ordering,
+  observed cancellation, signal/cancel RPCs) — run against a dev server via `TEMPORAL_INTEGRATION=1`,
+  and in CI.
 
-> Coverage caveat: integration tests prove the happy paths and the failure/terminate paths listed
-> above. Signal/cancel are only asserted at the RPC level (the workflow side can't yet react), and
-> replay is exercised for short workflows only. Everything below is **not** implemented.
+> Coverage caveat: integration tests prove the paths listed above (including signal
+> delivery/ordering and observed cancellation). Replay is exercised for short workflows only, and
+> everything below is **not** implemented.
 
 ## Phase 1 — robustness & determinism hardening
 
@@ -37,9 +40,11 @@ priority/dependency.
 
 ## Phase 2 — workflow feature surface
 
-- **Signals** (`GetSignalChannel`), **Queries** (`SetQueryHandler`), **Updates** (`SetUpdateHandler`).
+- **Queries** (`SetQueryHandler`), **Updates** (`SetUpdateHandler`) — need the coroutine dispatcher
+  (live state across a suspension).
 - **Child workflows** (`ExecuteChildWorkflow`).
-- **Selectors** (`workflow.Selector` equivalent) and **cancellation scopes**.
+- **Selectors** (`workflow.Selector` equivalent) and richer **cancellation scopes** (current
+  cancellation is observe-only via `IsCancelled()`).
 - **SideEffect / MutableSideEffect**, **`GetVersion`** versioning.
 - **ContinueAsNew**.
 - **Local activities**.

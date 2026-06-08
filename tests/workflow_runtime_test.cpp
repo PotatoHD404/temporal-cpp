@@ -1,7 +1,9 @@
 #include <chrono>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -40,6 +42,16 @@ class FakeEnv : public internal::WorkflowOutbound {
     }
   }
 
+  bool TryConsumeSignal(std::string_view name, Payloads& out) override {
+    if (std::string(name) != signal_name || signal_cursor >= signal_queue.size()) {
+      return false;
+    }
+    out = signal_queue[signal_cursor++];
+    return true;
+  }
+
+  bool IsCancelRequested() const override { return cancel_requested; }
+
   const workflow::WorkflowInfo& Info() const override { return info; }
   log::Logger& Logger() const override { return *log::DefaultLogger(); }
   bool IsReplaying() const override { return false; }
@@ -49,6 +61,10 @@ class FakeEnv : public internal::WorkflowOutbound {
   bool ready = false;
   Payloads result;
   workflow::WorkflowInfo info;
+  std::string signal_name = "sig";
+  std::vector<Payloads> signal_queue;
+  std::size_t signal_cursor = 0;
+  bool cancel_requested = false;
 };
 
 TEST(WorkflowRuntime, ExecuteActivityReturnsResultWhenReady) {
@@ -91,6 +107,38 @@ TEST(WorkflowRuntime, FailedActivitySurfacesActivityError) {
   workflow::Future<std::string> future(st, dc.get(), &env);
 
   EXPECT_THROW(future.Get(), ActivityError);
+}
+
+TEST(WorkflowRuntime, SignalChannelReturnsBufferedSignal) {
+  const auto dc = DataConverter::Default();
+  FakeEnv env;
+  env.signal_name = "greet";
+  env.signal_queue = {dc->ToPayloads(std::string("World"))};
+
+  workflow::Context ctx(&env, dc.get());
+  auto channel = ctx.GetSignalChannel<std::string>("greet");
+  EXPECT_EQ(channel.Receive(), "World");
+}
+
+TEST(WorkflowRuntime, SignalChannelParksWhenEmpty) {
+  const auto dc = DataConverter::Default();
+  FakeEnv env;  // no buffered signals
+
+  workflow::Context ctx(&env, dc.get());
+  auto channel = ctx.GetSignalChannel<std::string>("greet");
+  EXPECT_THROW(channel.Receive(), internal::WorkflowBlocked);
+
+  std::string out;
+  EXPECT_FALSE(channel.ReceiveAsync(out));
+}
+
+TEST(WorkflowRuntime, CancellationFlagSurfaces) {
+  const auto dc = DataConverter::Default();
+  FakeEnv env;
+  env.cancel_requested = true;
+
+  workflow::Context ctx(&env, dc.get());
+  EXPECT_TRUE(ctx.IsCancelled());
 }
 
 }  // namespace

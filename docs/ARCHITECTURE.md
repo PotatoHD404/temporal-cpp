@@ -87,15 +87,34 @@ maps cleanly onto non-sticky replay.
 Consequences and current limits:
 - **User workflow code must not `catch (...)`** in a way that swallows `WorkflowBlocked` (it is
   deliberately *not* derived from `std::exception`, so `catch (const std::exception&)` is safe).
-- **No mid-execution concurrency** yet — selectors, signals/queries/updates delivered partway
-  through a run, and cancellation are not modeled (see [ROADMAP](ROADMAP.md)). All `ExecuteActivity`
-  calls issued before the first blocking `Get()` *are* scheduled together, so fan-out/await of
-  several activities works.
+- **Signals and cancellation are supported** via history reconstruction (see below). **Queries,
+  updates, and selectors are not** — those need live in-memory state preserved across a suspension,
+  i.e. the coroutine dispatcher (see [ROADMAP](ROADMAP.md)). All `ExecuteActivity` calls issued
+  before the first blocking `Get()` *are* scheduled together, so fan-out/await of several activities
+  works.
 - **Re-execution is O(history) per task.** Fine for short workflows; a sticky in-process cache +
   stackful-coroutine dispatcher (closer to Go's `coroutineState`) is the roadmap upgrade for
   efficiency and full concurrency.
 - **No non-determinism detection** yet (comparing emitted commands against history). User code is
   trusted to be deterministic, as in every Temporal SDK.
+
+## Signals and cancellation
+
+Both arrive as history events (`WorkflowExecutionSignaled`, `WorkflowExecutionCancelRequested`), so
+they fit the replay model without needing preserved fiber state:
+
+- **Signals** — `ScanHistory` collects each `WorkflowExecutionSignaled` into a per-name ordered
+  list. `ctx.GetSignalChannel<T>(name)` returns a `ReceiveChannel` whose `Receive()` consumes the
+  next signal via a deterministic per-name cursor (reset every replay) and decodes it to `T`; if
+  none remain it throws `WorkflowBlocked` to park until the next event. Because replay is
+  deterministic, the Nth `Receive()` always returns the Nth signal — buffering and ordering match
+  Temporal semantics. `ReceiveAsync()` is the non-blocking variant.
+- **Cancellation** — `WorkflowExecutionCancelRequested` sets a flag exposed as `ctx.IsCancelled()`.
+  The workflow chooses how to react (finish, clean up); the cancel request schedules a workflow
+  task, so a workflow parked on a signal `Receive()` re-runs and can observe the flag.
+
+A signal that must interrupt a *blocked activity await* mid-task, and queries (which run against
+live state after replay), still require the coroutine dispatcher.
 
 ## Activities
 
