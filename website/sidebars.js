@@ -18,6 +18,7 @@ const sidebars = {
     },
     'client-and-worker',
     'data-conversion',
+    'advanced',
     'architecture',
     'testing',
     'parity',
