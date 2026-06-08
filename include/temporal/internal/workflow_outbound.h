@@ -77,6 +77,10 @@ class WorkflowOutbound {
   // the live, suspended workflow state when a query task arrives.
   virtual void RegisterQueryHandler(std::string name, QueryFn handler) = 0;
 
+  // Register an update handler. Like a query, but the call is recorded
+  // (accepted + completed) and may mutate workflow state.
+  virtual void RegisterUpdateHandler(std::string name, QueryFn handler) = 0;
+
   virtual const workflow::WorkflowInfo& Info() const = 0;
   virtual log::Logger& Logger() const = 0;
   virtual bool IsReplaying() const = 0;

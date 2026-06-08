@@ -133,18 +133,33 @@ they fit the replay model without needing preserved fiber state:
   The workflow chooses how to react (finish, clean up); the cancel request schedules a workflow
   task, so a workflow parked on a signal `Receive()` re-runs and can observe the flag.
 
-## Queries and selectors
+## Queries, updates, and selectors
 
-Both rely on the coroutine keeping live workflow state across a suspension:
+These rely on the coroutine keeping live workflow state across a suspension:
 
 - **Queries** — `ctx.SetQueryHandler(name, fn)` registers a read-only handler (re-registered each
   replay). When a query arrives, the workflow is replayed to its current suspension point and the
   handler is invoked against the live, parked state, answering via `RespondQueryTaskCompleted` (or
   `query_results` for queries attached to a workflow task). The client side is
   `WorkflowHandle::Query<R>(type, args...)`.
+- **Updates** — `ctx.SetUpdateHandler(name, fn)` registers a handler that may mutate state. An
+  update arrives as a protocol message in the workflow task; the handler runs against live state and
+  the worker replies with `Acceptance` + `Response` protocol messages (matching the Go SDK's bodies,
+  incl. `accepted_request_sequencing_event_id`). The client side is
+  `WorkflowHandle::Update<R>(name, args...)`. Because the sticky cache keeps a running workflow
+  resident, updates apply on the live path; validators and replay re-application after a cache
+  eviction are not yet implemented (see [ROADMAP](ROADMAP.md)).
 - **Selectors** — `workflow::Selector` waits on multiple futures and proceeds when any is ready
   (the canonical "activity OR timeout" pattern), running the matching case's handler; `Select()`
   parks via the coroutine when nothing is ready. An optional default makes it non-blocking.
+
+## Child workflows
+
+`ctx.ExecuteChildWorkflow<R>(opts, type, args...)` emits a `StartChildWorkflowExecution` command and
+returns a `Future` that resolves on `ChildWorkflowExecutionCompleted`/`Failed`, correlated directly
+by the (parent-assigned, deterministic) child `workflow_id`. It is wired through replay, sticky
+continuations, and the runner exactly like activities — the child runs as an independent workflow
+(here, on the parent's task queue).
 
 ## Activities
 

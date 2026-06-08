@@ -59,6 +59,8 @@ class FakeEnv : public internal::WorkflowOutbound {
 
   void RegisterQueryHandler(std::string, internal::QueryFn) override {}
 
+  void RegisterUpdateHandler(std::string, internal::QueryFn) override {}
+
   bool TryConsumeSignal(std::string_view name, Payloads& out) override {
     if (std::string(name) != signal_name || signal_cursor >= signal_queue.size()) {
       return false;

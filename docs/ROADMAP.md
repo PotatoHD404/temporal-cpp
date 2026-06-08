@@ -13,20 +13,24 @@ priority/dependency.
 - Workflows: sequential and parallel-await `ExecuteActivity<R>(...)`, timers (`NewTimer`/`Sleep`),
   typed args/results, failure propagation, activity retries (custom `RetryPolicy` honored).
 - Workflows: signals (`GetSignalChannel<T>().Receive()` / `ReceiveAsync`), cancellation
-  (`IsCancelled()`), queries (`SetQueryHandler` + `WorkflowHandle::Query<R>`), and selectors
-  (`workflow::Selector`, the "activity OR timeout" pattern).
+  (`IsCancelled()`), queries (`SetQueryHandler` + `WorkflowHandle::Query<R>`), selectors
+  (`workflow::Selector`, "activity OR timeout"), **updates** (`SetUpdateHandler` +
+  `WorkflowHandle::Update<R>`), and **child workflows** (`ExecuteChildWorkflow<R>`).
 - Activities: typed execution, application-error failures.
 - Data conversion: Nil / ByteSlice / JSON (nlohmann).
 - Engine: a stackful **coroutine dispatcher** (live workflow state across suspensions) with a
   **sticky cache** — running workflows stay in memory and continuation tasks apply only incremental
   history (no full re-replay), falling back to full-history replay on a cache miss.
-- Tested: 18 unit tests + 13 end-to-end integration tests (timer, single + parallel activities,
+- Tested: 18 unit tests + 15 end-to-end integration tests (timer, single + parallel activities,
   activity-failure propagation, RetryPolicy fail-fast, terminate, signal delivery + ordering,
   observed cancellation, live-state query, selector activity-vs-timeout both directions, sticky-cache
-  continuations) — run against a dev server via `TEMPORAL_INTEGRATION=1`, and in CI.
+  continuations, child workflow, state-accumulating update) — run against a dev server via
+  `TEMPORAL_INTEGRATION=1`, and in CI.
 
-> Coverage caveat: integration tests prove the paths listed above. A bounded cache LRU and
-> non-determinism detection are not yet implemented, and everything below is **not** implemented.
+> Coverage caveat: integration tests prove the paths listed above. Update **validators** and
+> **replay re-application** of updates after a cache eviction are not yet implemented (the sticky
+> cache keeps a running workflow resident, so updates apply on the live path); a bounded cache LRU
+> and non-determinism detection are also pending, and everything below is **not** implemented.
 
 ## Phase 1 — robustness & determinism hardening
 
@@ -39,8 +43,8 @@ priority/dependency.
 
 ## Phase 2 — workflow feature surface
 
-- **Updates** (`SetUpdateHandler`).
-- **Child workflows** (`ExecuteChildWorkflow`).
+- **Update validators** (`SetUpdateHandler` exists; add the optional validation phase / rejection)
+  and **replay re-application** of updates after a cache eviction.
 - Richer **cancellation scopes** (current cancellation is observe-only via `IsCancelled()`) and
   selector **channel cases** (the current `Selector` supports future cases).
 - **SideEffect / MutableSideEffect**, **`GetVersion`** versioning.

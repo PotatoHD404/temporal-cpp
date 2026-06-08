@@ -16,9 +16,12 @@
 #include "temporal/api/enums/v1/failed_cause.pb.h"
 #include "temporal/api/enums/v1/query.pb.h"
 #include "temporal/api/enums/v1/task_queue.pb.h"
+#include "google/protobuf/any.pb.h"
 #include "temporal/api/history/v1/message.pb.h"
+#include "temporal/api/protocol/v1/message.pb.h"
 #include "temporal/api/query/v1/message.pb.h"
 #include "temporal/api/taskqueue/v1/message.pb.h"
+#include "temporal/api/update/v1/message.pb.h"
 
 #include "internal/coroutine.h"
 #include "internal/grpc_client.h"
@@ -35,6 +38,8 @@ namespace cmd = ::temporal::api::command::v1;
 namespace enums = ::temporal::api::enums::v1;
 namespace hist = ::temporal::api::history::v1;
 namespace query = ::temporal::api::query::v1;
+namespace protocol = ::temporal::api::protocol::v1;
+namespace update = ::temporal::api::update::v1;
 
 // Outcome of an activity, derived by scanning history.
 struct ActivityOutcome {
@@ -225,6 +230,15 @@ class WorkflowRunner final : public WorkflowOutbound {
     return it->second(args);
   }
 
+  // Invoke a registered update handler (may mutate live workflow state).
+  Payloads RunUpdate(const std::string& name, const Payloads& args) {
+    const auto it = update_handlers_.find(name);
+    if (it == update_handlers_.end()) {
+      throw ApplicationError("unknown update: " + name, "UpdateNotRegistered");
+    }
+    return it->second(args);
+  }
+
   std::shared_ptr<FutureState> ScheduleActivity(std::string_view activity_type,
                                                 const Payloads& input,
                                                 const ActivityOptions& options) override {
@@ -311,6 +325,10 @@ class WorkflowRunner final : public WorkflowOutbound {
 
   void RegisterQueryHandler(std::string name, QueryFn handler) override {
     query_handlers_.insert_or_assign(std::move(name), std::move(handler));
+  }
+
+  void RegisterUpdateHandler(std::string name, QueryFn handler) override {
+    update_handlers_.insert_or_assign(std::move(name), std::move(handler));
   }
 
   const workflow::WorkflowInfo& Info() const override { return info_; }
@@ -490,6 +508,7 @@ class WorkflowRunner final : public WorkflowOutbound {
   Payloads input_;
   std::unordered_map<std::string, std::size_t> signal_cursor_;
   std::unordered_map<std::string, QueryFn> query_handlers_;
+  std::unordered_map<std::string, QueryFn> update_handlers_;
   std::unordered_map<std::string, std::shared_ptr<FutureState>> activity_futures_;  // by activity_id
   std::unordered_map<std::string, std::shared_ptr<FutureState>> timer_futures_;     // by timer_id
   std::unordered_map<std::string, std::shared_ptr<FutureState>> child_futures_;     // by child wf id
@@ -616,6 +635,43 @@ void WorkflowTaskHandler::Handle(const wsv::PollWorkflowTaskQueueResponse& task)
   }
   for (const auto& c : runner->commands()) {
     *req.add_commands() = c;
+  }
+  // Process workflow updates delivered as protocol messages: accept each, run its
+  // handler against live state, and complete it. Each is recorded via a
+  // PROTOCOL_MESSAGE command referencing the message.
+  for (const auto& msg : task.messages()) {
+    update::Request request;
+    if (!msg.body().UnpackTo(&request)) {
+      continue;  // not an update request
+    }
+    const std::string& instance_id = msg.protocol_instance_id();
+
+    // Accept the update (matches the Go SDK's message body, including the
+    // request's sequencing event id).
+    auto* accept_msg = req.add_messages();
+    accept_msg->set_id(instance_id + "/accept");
+    accept_msg->set_protocol_instance_id(instance_id);
+    update::Acceptance acceptance;
+    acceptance.set_accepted_request_message_id(msg.id());
+    acceptance.set_accepted_request_sequencing_event_id(msg.event_id());
+    *acceptance.mutable_accepted_request() = request;
+    static_cast<void>(accept_msg->mutable_body()->PackFrom(acceptance));  // cannot fail here
+
+    // Run the handler and complete the update.
+    update::Response response;
+    response.mutable_meta()->set_update_id(instance_id);
+    response.mutable_meta()->set_identity(grpc_->identity());
+    try {
+      const Payloads result =
+          runner->RunUpdate(request.input().name(), FromProtoPayloads(request.input().args()));
+      *response.mutable_outcome()->mutable_success() = ToProtoPayloads(result);
+    } catch (const std::exception& e) {
+      *response.mutable_outcome()->mutable_failure() = MakeApplicationFailure(e.what(), "UpdateFailed");
+    }
+    auto* complete_msg = req.add_messages();
+    complete_msg->set_id(instance_id + "/complete");
+    complete_msg->set_protocol_instance_id(instance_id);
+    static_cast<void>(complete_msg->mutable_body()->PackFrom(response));
   }
   if (runner->Completed()) {
     auto* c = req.add_commands();

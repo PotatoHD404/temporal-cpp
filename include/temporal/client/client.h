@@ -52,6 +52,18 @@ class WorkflowHandle {
     }
   }
 
+  // Synchronously send an update and wait for its result (throws on failure).
+  template <class R, class... Args>
+  R Update(std::string_view update_name, const Args&... args) {
+    Payloads result = UpdatePayloads(update_name, converter_->ToPayloads(args...));
+    if constexpr (std::is_void_v<R>) {
+      (void)result;
+      return;
+    } else {
+      return converter_->FromPayload<R>(result.at(0));
+    }
+  }
+
   void Signal(std::string_view signal_name, const Payloads& args);
   void Cancel();
   void Terminate(std::string_view reason = "");
@@ -59,6 +71,7 @@ class WorkflowHandle {
  private:
   Payloads ResultPayloads();  // non-template; defined in client.cpp
   Payloads QueryPayloads(std::string_view query_type, const Payloads& args);
+  Payloads UpdatePayloads(std::string_view update_name, const Payloads& args);
 
   std::shared_ptr<internal::GrpcClient> grpc_;
   std::shared_ptr<DataConverter> converter_;

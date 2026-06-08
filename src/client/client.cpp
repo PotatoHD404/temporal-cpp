@@ -5,8 +5,10 @@
 #include <utility>
 
 #include "temporal/api/enums/v1/event_type.pb.h"
+#include "temporal/api/enums/v1/update.pb.h"
 #include "temporal/api/history/v1/message.pb.h"
 #include "temporal/api/query/v1/message.pb.h"
+#include "temporal/api/update/v1/message.pb.h"
 
 #include "internal/grpc_client.h"
 #include "internal/proto_util.h"
@@ -112,6 +114,28 @@ Payloads WorkflowHandle::QueryPayloads(std::string_view query_type, const Payloa
   }
   const auto resp = grpc_->QueryWorkflow(req);
   return internal::FromProtoPayloads(resp.query_result());
+}
+
+Payloads WorkflowHandle::UpdatePayloads(std::string_view update_name, const Payloads& args) {
+  internal::wsv::UpdateWorkflowExecutionRequest req;
+  req.set_namespace_(ns_);
+  req.mutable_workflow_execution()->set_workflow_id(workflow_id_);
+  if (!run_id_.empty()) {
+    req.mutable_workflow_execution()->set_run_id(run_id_);
+  }
+  req.mutable_request()->mutable_meta()->set_update_id(internal::NewUuid());
+  req.mutable_request()->mutable_input()->set_name(std::string(update_name));
+  if (!args.empty()) {
+    *req.mutable_request()->mutable_input()->mutable_args() = internal::ToProtoPayloads(args);
+  }
+  req.mutable_wait_policy()->set_lifecycle_stage(
+      enums::UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_COMPLETED);
+
+  const auto resp = grpc_->UpdateWorkflowExecution(req);
+  if (resp.outcome().has_failure()) {
+    throw WorkflowFailedError("update failed: " + resp.outcome().failure().message());
+  }
+  return internal::FromProtoPayloads(resp.outcome().success());
 }
 
 Client Client::Connect(const ClientOptions& options) {

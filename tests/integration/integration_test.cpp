@@ -147,6 +147,18 @@ std::string ParentWorkflow(temporal::workflow::Context& ctx, std::string name) {
   return ctx.ExecuteChildWorkflow<std::string>(o, "GreetChildWorkflow", name).Get();
 }
 
+// Holds a running total; an "add" update adds to it and returns the new total.
+// The body blocks on a signal so the workflow stays running for updates.
+int UpdatableWorkflow(temporal::workflow::Context& ctx) {
+  int total = 0;
+  ctx.SetUpdateHandler("add", [&](int n) {
+    total += n;
+    return total;
+  });
+  ctx.GetSignalChannel<std::string>("stop").Receive();
+  return total;
+}
+
 // ---- harness -------------------------------------------------------------
 std::atomic<int> g_seq{0};
 
@@ -298,7 +310,16 @@ TEST_F(IntegrationTest, QueryReadsLiveWorkflowState) {
   const auto dc = temporal::DataConverter::Default();
   handle.Signal("add", dc->ToPayloads(5));
   handle.Signal("add", dc->ToPayloads(7));
-  EXPECT_EQ(handle.Query<int>("sum"), 12);  // query the live, parked workflow
+  // Queries are read-after-write eventually consistent vs. just-sent signals, so
+  // poll the live, parked workflow until both signals have been applied.
+  int sum = 0;
+  for (int i = 0; i < 40 && sum != 12; ++i) {
+    sum = handle.Query<int>("sum");
+    if (sum != 12) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+  }
+  EXPECT_EQ(sum, 12);
   handle.Terminate("done");
   worker.Stop();
 }
@@ -359,6 +380,21 @@ TEST_F(IntegrationTest, ChildWorkflowReturnsResultToParent) {
   o.task_queue = tq;
   auto handle = client_->StartWorkflow(o, "ParentWorkflow", std::string("World"));
   EXPECT_EQ(handle.Result<std::string>(), "child:World");
+  worker.Stop();
+}
+
+TEST_F(IntegrationTest, UpdateMutatesStateAndReturnsResult) {
+  const auto tq = UniqueTaskQueue("update");
+  temporal::worker::Worker worker(*client_, tq);
+  worker.RegisterWorkflow("UpdatableWorkflow", UpdatableWorkflow);
+  worker.Start();
+
+  temporal::StartWorkflowOptions o;
+  o.task_queue = tq;
+  auto handle = client_->StartWorkflow(o, "UpdatableWorkflow");
+  EXPECT_EQ(handle.Update<int>("add", 5), 5);  // accumulates across updates
+  EXPECT_EQ(handle.Update<int>("add", 3), 8);
+  handle.Terminate("done");
   worker.Stop();
 }
 

@@ -82,6 +82,15 @@ class Context {
         std::move(name), MakeQueryFn<typename Sig::ret, typename Sig::args>(std::move(handler)));
   }
 
+  // Register an update handler `R Fn(Args...)`, à la `workflow.SetUpdateHandler`.
+  // Unlike a query it may mutate workflow state, and the call is recorded.
+  template <class Fn>
+  void SetUpdateHandler(std::string name, Fn handler) {
+    using Sig = internal::fn_sig<std::decay_t<Fn>>;
+    env_->RegisterUpdateHandler(
+        std::move(name), MakeQueryFn<typename Sig::ret, typename Sig::args>(std::move(handler)));
+  }
+
   const WorkflowInfo& GetInfo() const { return env_->Info(); }
   log::Logger& GetLogger() const { return env_->Logger(); }
   bool IsReplaying() const { return env_->IsReplaying(); }

@@ -156,4 +156,14 @@ wsv::RespondQueryTaskCompletedResponse GrpcClient::RespondQueryTaskCompleted(
       });
 }
 
+wsv::UpdateWorkflowExecutionResponse GrpcClient::UpdateWorkflowExecution(
+    const wsv::UpdateWorkflowExecutionRequest& req) {
+  // Blocks until the update reaches the requested lifecycle stage.
+  return UnaryCall<wsv::UpdateWorkflowExecutionResponse>(
+      "UpdateWorkflowExecution", false,
+      [&](grpc::ClientContext* c, wsv::UpdateWorkflowExecutionResponse* p) {
+        return stub_->UpdateWorkflowExecution(c, req, p);
+      });
+}
+
 }  // namespace temporal::internal
