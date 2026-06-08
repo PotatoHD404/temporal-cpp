@@ -20,6 +20,7 @@ namespace temporal::internal {
 struct CommandEvent {
   enum class Kind : std::uint8_t {
     Activity,           // ScheduleActivityTask <-> ActivityTaskScheduled
+    RequestCancelActivity,  // RequestCancelActivityTask <-> ActivityTaskCancelRequested
     Timer,              // StartTimer           <-> TimerStarted
     CancelTimer,        // CancelTimer          <-> TimerCanceled
     ChildWorkflow,      // StartChildWorkflow   <-> StartChildWorkflowExecutionInitiated
@@ -38,6 +39,8 @@ inline const char* CommandKindName(CommandEvent::Kind k) {
   switch (k) {
     case CommandEvent::Kind::Activity:
       return "ScheduleActivity";
+    case CommandEvent::Kind::RequestCancelActivity:
+      return "RequestCancelActivity";
     case CommandEvent::Kind::Timer:
       return "StartTimer";
     case CommandEvent::Kind::CancelTimer:
@@ -67,6 +70,7 @@ inline bool CommandMatchesEvent(const CommandEvent& produced, const CommandEvent
     case CommandEvent::Kind::Activity:
     case CommandEvent::Kind::ChildWorkflow:
       return produced.id == expected.id && produced.name == expected.name;
+    case CommandEvent::Kind::RequestCancelActivity:
     case CommandEvent::Kind::Timer:
     case CommandEvent::Kind::CancelTimer:
     case CommandEvent::Kind::Marker:

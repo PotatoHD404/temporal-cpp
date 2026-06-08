@@ -60,7 +60,7 @@ cache. This page is the honest accounting.
 | Child workflows | ✅ | basic; no parent-close-policy / cancel / signal-child |
 | Continue-as-new | ✅ | |
 | Observe cancellation (`IsCancelled`) | ✅ | |
-| Cancellation scopes / propagation | 🟡 | `AwaitCancellation` (react in a Selector) + timer `Future::Cancel` ✅; activity/child cancel ❌ |
+| Cancellation scopes / propagation | 🟡 | `AwaitCancellation` + timer & activity `Future::Cancel` ✅; child-workflow cancel ❌ |
 | `GetVersion` / patching | ✅ | marker-based; `kDefaultVersion` on pre-version history |
 | SideEffect / MutableSideEffect | 🟡 | `SideEffect` ✅ (marker record/replay); MutableSideEffect ❌ |
 | Local activities | ❌ | |
@@ -77,7 +77,7 @@ cache. This page is the honest accounting.
 | Application errors (retryable / not) | ✅ | |
 | Heartbeating | ✅ | `Context::IsCancelled` observes the server's cancel; throttling ❌ |
 | Async (manual) completion | ❌ | |
-| Activity-side cancellation | ❌ | |
+| Activity-side cancellation | ✅ | workflow `Future::Cancel` → `RequestCancelActivityTask`; activity sees it via `Context::IsCancelled` |
 
 ## Data & serialization
 

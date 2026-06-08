@@ -101,7 +101,22 @@ sel.AddFuture(ctx.AwaitCancellation(), [&] {
 sel.Select();
 ```
 
-Когда воркфлоу отменяют, `AwaitCancellation` завершается, селектор выбирает эту ветку, и воркфлоу отменяет свой таймер и быстро завершается. Отмена активностей и дочерних воркфлоу пока не подключена — *сторона* активности уже доступна (`activity::Context::IsCancelled` видит отмену от сервера через heartbeat), но триггер `RequestCancelActivityTask` со стороны воркфлоу — оставшаяся часть.
+Когда воркфлоу отменяют, `AwaitCancellation` завершается, селектор выбирает эту ветку, и воркфлоу отменяет свой таймер и быстро завершается.
+
+**Активности** отменяются точно так же: вызовите `Cancel()` у `Future` активности, чтобы сгенерировать `RequestCancelActivityTask`. Активность с heartbeat видит запрос через `activity::Context::IsCancelled()` и быстро завершается:
+
+```cpp
+std::string MyActivity(temporal::activity::Context& ctx, int n) {
+  for (int i = 0; i < n; ++i) {
+    do_some_work();
+    ctx.RecordHeartbeat(i);
+    if (ctx.IsCancelled()) return "cancelled";  // увидели запрос на отмену
+  }
+  return "done";
+}
+```
+
+Отмена доставляется через heartbeat, поэтому увидеть её может только активность с heartbeat. Отмена дочерних воркфлоу пока не подключена.
 
 ## Replay testing {#replay-testing}
 

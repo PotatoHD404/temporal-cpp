@@ -53,11 +53,11 @@ priority/dependency.
   runs before acceptance, and a throw rejects the update with an ephemeral `Rejection` protocol
   message (no command, so nothing is written to history). **Replay re-application** of accepted
   updates after a cache eviction remains.
-- **Cancellation**: timer cancellation ✅ via `Future::Cancel()` (emits `CancelTimer`, resolves the
-  future, replays deterministically). Remaining: activity/child-workflow cancellation (needs
-  activity-side cancel observation) and workflow→operation propagation; workflow-level cancel is
-  still observe-only via `IsCancelled()`. Plus selector **channel cases** (the current `Selector`
-  supports future cases).
+- **Cancellation** ✅ (mostly): timer cancellation via `Future::Cancel()`; workflow reacts to its
+  own cancel via `ctx.AwaitCancellation()` (a Selector case); **activity cancellation** via
+  `Future::Cancel()` → `RequestCancelActivityTask`, observed activity-side through
+  `activity::Context::IsCancelled()` (heartbeat). Remaining: child-workflow cancellation +
+  parent-close-policy. Plus selector **channel cases** (the current `Selector` supports future cases).
 - **SideEffect** ✅ + **`GetVersion`** versioning ✅ — marker record/replay (RecordMarker command;
   SideEffect keyed by call order, Version by change id). MutableSideEffect remaining.
 - **Local activities**.

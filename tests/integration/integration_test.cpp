@@ -213,6 +213,33 @@ std::string CancelAwareWorkflow(temporal::workflow::Context& ctx) {
   return out;
 }
 
+// Heartbeats until it observes a server cancel request, then returns "cancelled".
+std::string CancellableActivity(temporal::activity::Context& ctx, int) {
+  for (int i = 0; i < 100; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    ctx.RecordHeartbeat(i);
+    if (ctx.IsCancelled()) {
+      return "cancelled";
+    }
+  }
+  return "finished";
+}
+
+// Runs a heartbeating activity; if the workflow is cancelled it cancels the
+// activity (RequestCancelActivityTask) and returns the activity's result.
+std::string ActivityCancelWorkflow(temporal::workflow::Context& ctx) {
+  temporal::ActivityOptions o;
+  o.start_to_close_timeout = 60s;
+  o.heartbeat_timeout = 5s;
+  auto act = ctx.ExecuteActivity<std::string>(o, "CancellableActivity", 0);
+  auto cancelled = ctx.AwaitCancellation();
+  temporal::workflow::Selector sel(ctx);
+  sel.AddFuture<std::string>(act, [](std::string) {});  // activity finished on its own
+  sel.AddFuture(cancelled, [&]() { act.Cancel(); });    // workflow cancel -> cancel the activity
+  sel.Select();
+  return act.Get();  // the activity's result ("cancelled" after it observes the request)
+}
+
 // Runs longer than its heartbeat timeout but heartbeats to stay alive.
 std::string HeartbeatActivity(temporal::activity::Context& ctx, int) {
   for (int i = 0; i < 5; ++i) {
@@ -789,6 +816,24 @@ TEST_F(IntegrationTest, WorkflowReactsToCancellationViaSelector) {
   handle.Cancel();
   EXPECT_EQ(handle.Result<std::string>(), "cancelled");  // woke via AwaitCancellation
   EXPECT_LT(std::chrono::steady_clock::now() - t0, std::chrono::seconds(20));
+  worker.Stop();
+}
+
+// End-to-end activity cancellation: cancelling the workflow makes it cancel its
+// in-flight activity (RequestCancelActivityTask); the activity observes the
+// request via its heartbeat (Context::IsCancelled) and returns "cancelled".
+TEST_F(IntegrationTest, ActivityCancellationViaWorkflowCancel) {
+  const auto tq = UniqueTaskQueue("act-cancel");
+  temporal::worker::Worker worker(*client_, tq);
+  worker.RegisterWorkflow("ActivityCancelWorkflow", ActivityCancelWorkflow);
+  worker.RegisterActivity("CancellableActivity", CancellableActivity);
+  worker.Start();
+  temporal::StartWorkflowOptions o;
+  o.task_queue = tq;
+  auto handle = client_->StartWorkflow(o, "ActivityCancelWorkflow");
+  std::this_thread::sleep_for(3s);  // let the activity start and heartbeat
+  handle.Cancel();                  // workflow cancel -> the workflow cancels its activity
+  EXPECT_EQ(handle.Result<std::string>(), "cancelled");  // activity observed it and returned
   worker.Stop();
 }
 

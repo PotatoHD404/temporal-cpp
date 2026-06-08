@@ -129,10 +129,25 @@ sel.Select();
 ```
 
 When the workflow is cancelled, `AwaitCancellation` completes, the selector takes
-that branch, and the workflow cancels its timer and finishes promptly. Activity
-and child-workflow cancellation are not wired yet — the activity *side* is exposed
-(`activity::Context::IsCancelled` observes a server cancel via heartbeat), but the
-workflow→activity `RequestCancelActivityTask` trigger is the remaining piece.
+that branch, and the workflow cancels its timer and finishes promptly.
+
+**Activities** can be cancelled the same way: call `Cancel()` on the activity's
+`Future` to emit a `RequestCancelActivityTask`. A heartbeating activity observes
+the request through `activity::Context::IsCancelled()` and returns promptly:
+
+```cpp
+std::string MyActivity(temporal::activity::Context& ctx, int n) {
+  for (int i = 0; i < n; ++i) {
+    do_some_work();
+    ctx.RecordHeartbeat(i);
+    if (ctx.IsCancelled()) return "cancelled";  // observed the cancel request
+  }
+  return "done";
+}
+```
+
+Cancellation is delivered through heartbeats, so only a heartbeating activity can
+observe it. Child-workflow cancellation isn't wired yet.
 
 ## Replay testing
 

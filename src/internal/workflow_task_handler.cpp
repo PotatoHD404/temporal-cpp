@@ -48,6 +48,7 @@ struct ActivityOutcome {
   bool scheduled = false;
   bool resolved = false;  // completed, failed, or timed out
   bool failed = false;
+  bool cancel_requested = false;  // an ActivityTaskCancelRequested is already in history
   Payloads result;
   std::string failure_type;
   std::string failure_message;
@@ -79,6 +80,7 @@ struct Prescan {
   // For incremental (sticky) continuations: correlate completion events to the
   // activity_id of their schedule, and remember how far history has been consumed.
   std::unordered_map<std::int64_t, std::string> sched_event_to_activity;
+  std::unordered_map<std::string, std::int64_t> activity_to_sched_event;  // for RequestCancelActivity
   std::int64_t last_event_id = 0;
   // Ordered command-generating events, for non-determinism detection on replay.
   std::vector<CommandEvent> commands;
@@ -103,7 +105,18 @@ Prescan ScanHistory(const hist::History& history) {
         const auto& a = ev.activity_task_scheduled_event_attributes();
         ps.activities[a.activity_id()].scheduled = true;
         ps.sched_event_to_activity[ev.event_id()] = a.activity_id();
+        ps.activity_to_sched_event[a.activity_id()] = ev.event_id();
         ps.commands.push_back({CommandEvent::Kind::Activity, a.activity_id(), a.activity_type().name()});
+        break;
+      }
+      case enums::EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED: {
+        const auto& a = ev.activity_task_cancel_requested_event_attributes();
+        ps.commands.push_back(
+            {CommandEvent::Kind::RequestCancelActivity, std::to_string(a.scheduled_event_id()), ""});
+        const auto it = ps.sched_event_to_activity.find(a.scheduled_event_id());
+        if (it != ps.sched_event_to_activity.end()) {
+          ps.activities[it->second].cancel_requested = true;
+        }
         break;
       }
       case enums::EVENT_TYPE_ACTIVITY_TASK_COMPLETED: {
@@ -137,6 +150,18 @@ Prescan ScanHistory(const hist::History& history) {
           o.failed = true;
           o.failure_message = "activity timed out";
           o.failure_type = "TimeoutError";
+        }
+        break;
+      }
+      case enums::EVENT_TYPE_ACTIVITY_TASK_CANCELED: {
+        const auto& a = ev.activity_task_canceled_event_attributes();
+        const auto it = ps.sched_event_to_activity.find(a.scheduled_event_id());
+        if (it != ps.sched_event_to_activity.end()) {
+          auto& o = ps.activities[it->second];
+          o.resolved = true;
+          o.failed = true;
+          o.failure_message = "activity cancelled";
+          o.failure_type = "CanceledError";
         }
         break;
       }
@@ -323,6 +348,8 @@ class WorkflowRunner final : public WorkflowOutbound {
     const std::string id = std::to_string(activity_seq_++);
     produced_commands_.push_back({CommandEvent::Kind::Activity, id, std::string(activity_type)});
     auto state = std::make_shared<FutureState>();
+    state->op = FutureState::Op::Activity;
+    state->op_id = id;
     const auto it = scan_.activities.find(id);
     if (it != scan_.activities.end() && it->second.scheduled) {
       const ActivityOutcome& o = it->second;
@@ -361,20 +388,38 @@ class WorkflowRunner final : public WorkflowOutbound {
     if (!state || state->cancelled) {
       return;
     }
-    if (state->op != FutureState::Op::Timer) {
-      logger_->Warn("cancellation is only supported for timers so far",
-                    {log::F("op_id", state->op_id)});
+    if (state->op == FutureState::Op::Timer) {
+      produced_commands_.push_back({CommandEvent::Kind::CancelTimer, state->op_id, ""});
+      // Emit the command only if the cancel isn't already recorded in history.
+      const auto it = scan_.timers.find(state->op_id);
+      if (!(it != scan_.timers.end() && it->second.cancelled)) {
+        EmitCancelTimer(state->op_id);
+      }
+      state->ready = true;
+      state->cancelled = true;  // a timer resolves immediately on cancel
       return;
     }
-    produced_commands_.push_back({CommandEvent::Kind::CancelTimer, state->op_id, ""});
-    // Emit the command only if the cancel isn't already recorded in history.
-    const auto it = scan_.timers.find(state->op_id);
-    const bool already_cancelled = it != scan_.timers.end() && it->second.cancelled;
-    if (!already_cancelled) {
-      EmitCancelTimer(state->op_id);
+    if (state->op == FutureState::Op::Activity) {
+      // Ask the server to cancel the activity. The future is NOT resolved here:
+      // the activity observes the request via its heartbeat and finishes, which
+      // resolves the future through the normal completion/canceled event. Only an
+      // activity already scheduled in history can be cancelled.
+      const auto sched = scan_.activity_to_sched_event.find(state->op_id);
+      if (sched == scan_.activity_to_sched_event.end()) {
+        logger_->Warn("cannot cancel an activity not yet scheduled in history",
+                      {log::F("activity_id", state->op_id)});
+        return;
+      }
+      produced_commands_.push_back(
+          {CommandEvent::Kind::RequestCancelActivity, std::to_string(sched->second), ""});
+      const auto act = scan_.activities.find(state->op_id);
+      if (!(act != scan_.activities.end() && act->second.cancel_requested)) {
+        EmitRequestCancelActivity(sched->second);
+      }
+      return;
     }
-    state->ready = true;
-    state->cancelled = true;
+    logger_->Warn("cancellation not supported for this operation",
+                  {log::F("op_id", state->op_id)});
   }
 
   std::shared_ptr<FutureState> StartChildWorkflow(std::string_view workflow_type,
@@ -568,10 +613,12 @@ class WorkflowRunner final : public WorkflowOutbound {
         continue;
       }
       switch (ev.event_type()) {
-        case enums::EVENT_TYPE_ACTIVITY_TASK_SCHEDULED:
-          scan_.sched_event_to_activity[ev.event_id()] =
-              ev.activity_task_scheduled_event_attributes().activity_id();
+        case enums::EVENT_TYPE_ACTIVITY_TASK_SCHEDULED: {
+          const auto& a = ev.activity_task_scheduled_event_attributes();
+          scan_.sched_event_to_activity[ev.event_id()] = a.activity_id();
+          scan_.activity_to_sched_event[a.activity_id()] = ev.event_id();
           break;
+        }
         case enums::EVENT_TYPE_ACTIVITY_TASK_COMPLETED: {
           const auto& a = ev.activity_task_completed_event_attributes();
           ResolveActivity(a.scheduled_event_id(), false, FromProtoPayloads(a.result()), "", "");
@@ -586,6 +633,19 @@ class WorkflowRunner final : public WorkflowOutbound {
         case enums::EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT: {
           const auto& a = ev.activity_task_timed_out_event_attributes();
           ResolveActivity(a.scheduled_event_id(), true, {}, "TimeoutError", "activity timed out");
+          break;
+        }
+        case enums::EVENT_TYPE_ACTIVITY_TASK_CANCELED: {
+          const auto& a = ev.activity_task_canceled_event_attributes();
+          ResolveActivity(a.scheduled_event_id(), true, {}, "CanceledError", "activity cancelled");
+          break;
+        }
+        case enums::EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED: {
+          const auto& a = ev.activity_task_cancel_requested_event_attributes();
+          const auto it = scan_.sched_event_to_activity.find(a.scheduled_event_id());
+          if (it != scan_.sched_event_to_activity.end()) {
+            scan_.activities[it->second].cancel_requested = true;
+          }
           break;
         }
         case enums::EVENT_TYPE_TIMER_FIRED: {
@@ -686,6 +746,14 @@ class WorkflowRunner final : public WorkflowOutbound {
     cmd::Command c;
     c.set_command_type(enums::COMMAND_TYPE_CANCEL_TIMER);
     c.mutable_cancel_timer_command_attributes()->set_timer_id(id);
+    commands_.push_back(std::move(c));
+  }
+
+  void EmitRequestCancelActivity(std::int64_t scheduled_event_id) {
+    cmd::Command c;
+    c.set_command_type(enums::COMMAND_TYPE_REQUEST_CANCEL_ACTIVITY_TASK);
+    c.mutable_request_cancel_activity_task_command_attributes()->set_scheduled_event_id(
+        scheduled_event_id);
     commands_.push_back(std::move(c));
   }
 
