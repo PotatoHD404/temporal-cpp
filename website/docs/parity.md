@@ -66,7 +66,7 @@ cache. This page is the honest accounting.
 | Local activities | ❌ | |
 | External-workflow signal/cancel | ✅ | `CancelExternalWorkflow` + `SignalExternalWorkflow` |
 | Search attributes / memo / upsert | ✅ | memo ✅; start-time + workflow `UpsertSearchAttributes` ✅ (`sa::` typed helpers) |
-| Header / context propagation | ❌ | |
+| Header / context propagation | ✅ | start headers readable in the workflow + auto-propagated to activities |
 
 ## Activities
 

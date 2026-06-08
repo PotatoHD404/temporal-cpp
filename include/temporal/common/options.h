@@ -63,6 +63,9 @@ struct StartWorkflowOptions {
   // `temporal::sa::` helpers, e.g. `o.search_attributes["Tier"] = sa::Keyword("gold")`.
   // The named attribute must be registered on the namespace.
   std::map<std::string, Payload> search_attributes;
+  // Context-propagation headers. Readable in the workflow (Context::GetHeader)
+  // and auto-propagated to the activities/child workflows it starts.
+  std::map<std::string, Payload> headers;
 };
 
 // Options for `workflow::Context::ExecuteActivity`.

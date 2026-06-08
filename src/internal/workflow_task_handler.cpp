@@ -73,6 +73,7 @@ struct ChildOutcome {
 
 struct Prescan {
   Payloads input;
+  std::map<std::string, Payload> headers;  // from WorkflowExecutionStarted.header
   std::unordered_map<std::string, ActivityOutcome> activities;  // keyed by activity_id
   std::unordered_map<std::string, TimerOutcome> timers;         // keyed by timer_id
   std::unordered_map<std::string, ChildOutcome> children;       // keyed by child workflow_id
@@ -101,9 +102,14 @@ Prescan ScanHistory(const hist::History& history) {
   for (const auto& ev : history.events()) {
     ps.last_event_id = ev.event_id();
     switch (ev.event_type()) {
-      case enums::EVENT_TYPE_WORKFLOW_EXECUTION_STARTED:
-        ps.input = FromProtoPayloads(ev.workflow_execution_started_event_attributes().input());
+      case enums::EVENT_TYPE_WORKFLOW_EXECUTION_STARTED: {
+        const auto& a = ev.workflow_execution_started_event_attributes();
+        ps.input = FromProtoPayloads(a.input());
+        for (const auto& [key, value] : a.header().fields()) {
+          ps.headers[key] = FromProtoPayload(value);
+        }
         break;
+      }
       case enums::EVENT_TYPE_ACTIVITY_TASK_SCHEDULED: {
         const auto& a = ev.activity_task_scheduled_event_attributes();
         ps.activities[a.activity_id()].scheduled = true;
@@ -298,6 +304,8 @@ class WorkflowRunner final : public WorkflowOutbound {
         converter_(converter),
         workflow_fn_(std::move(workflow_fn)),
         input_(std::move(input)) {
+    // Surface context-propagation headers (from WorkflowExecutionStarted) on Info.
+    info_.headers = scan_.headers;
     // Resolve recorded GetVersion markers up front so GetVersion calls during the
     // run see the version history recorded.
     for (const auto& [id_payloads, ver_payloads] : scan_.version_markers) {
@@ -808,6 +816,9 @@ class WorkflowRunner final : public WorkflowOutbound {
                                                                     : options.task_queue);
     if (!input.empty()) {
       *attr->mutable_input() = ToProtoPayloads(input);
+    }
+    for (const auto& [key, value] : info_.headers) {  // auto-propagate context headers
+      (*attr->mutable_header()->mutable_fields())[key] = ToProtoPayload(value);
     }
     if (options.schedule_to_close_timeout.count() > 0) {
       *attr->mutable_schedule_to_close_timeout() =

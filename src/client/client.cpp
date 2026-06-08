@@ -296,6 +296,9 @@ WorkflowHandle Client::StartWorkflowPayloads(const StartWorkflowOptions& options
   for (const auto& [key, value] : options.search_attributes) {
     (*req.mutable_search_attributes()->mutable_indexed_fields())[key] = internal::ToProtoPayload(value);
   }
+  for (const auto& [key, value] : options.headers) {
+    (*req.mutable_header()->mutable_fields())[key] = internal::ToProtoPayload(value);
+  }
 
   const auto resp = grpc_->StartWorkflowExecution(req);
   return {grpc_, converter_, ns_, workflow_id, resp.run_id()};

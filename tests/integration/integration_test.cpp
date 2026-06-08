@@ -265,6 +265,26 @@ std::string AsyncActivityWorkflow(temporal::workflow::Context& ctx) {
   return ctx.ExecuteActivity<std::string>(o, "AsyncCaptureActivity", 0).Get();
 }
 
+// Decodes and returns the named auto-propagated header value (or "MISSING").
+std::string HeaderEchoActivity(temporal::activity::Context& ctx, std::string key) {
+  const auto& headers = ctx.GetInfo().headers;
+  const auto it = headers.find(key);
+  if (it == headers.end()) {
+    return "MISSING";
+  }
+  return ctx.data_converter().FromPayload<std::string>(it->second);
+}
+
+// Confirms it received the start header, then has it auto-propagated to an activity.
+std::string HeaderPropagationWorkflow(temporal::workflow::Context& ctx) {
+  const bool wf_has = ctx.GetInfo().headers.count("trace") > 0;
+  temporal::ActivityOptions o;
+  o.start_to_close_timeout = 10s;
+  const std::string act =
+      ctx.ExecuteActivity<std::string>(o, "HeaderEchoActivity", std::string("trace")).Get();
+  return std::string(wf_has ? "wf-has|" : "wf-missing|") + act;
+}
+
 // Heartbeats until it observes a server cancel request, then returns "cancelled".
 std::string CancellableActivity(temporal::activity::Context& ctx, int) {
   for (int i = 0; i < 100; ++i) {
@@ -1102,6 +1122,22 @@ TEST_F(IntegrationTest, AsyncActivityCompletion) {
   ASSERT_TRUE(g_async_captured.load());  // activity ran and deferred
   client_->CompleteActivity(g_async_token, std::string("async-result"));
   EXPECT_EQ(handle.Result<std::string>(), "async-result");
+  worker.Stop();
+}
+
+// A start header is visible to the workflow and auto-propagated to its activities.
+TEST_F(IntegrationTest, HeaderContextPropagation) {
+  const auto tq = UniqueTaskQueue("header");
+  temporal::worker::Worker worker(*client_, tq);
+  worker.RegisterWorkflow("HeaderPropagationWorkflow", HeaderPropagationWorkflow);
+  worker.RegisterActivity("HeaderEchoActivity", HeaderEchoActivity);
+  worker.Start();
+  const auto dc = temporal::DataConverter::Default();
+  temporal::StartWorkflowOptions o;
+  o.task_queue = tq;
+  o.headers["trace"] = dc->ToPayload(std::string("abc123"));
+  auto handle = client_->StartWorkflow(o, "HeaderPropagationWorkflow");
+  EXPECT_EQ(handle.Result<std::string>(), "wf-has|abc123");
   worker.Stop();
 }
 

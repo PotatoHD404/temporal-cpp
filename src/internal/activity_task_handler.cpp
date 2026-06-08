@@ -32,6 +32,9 @@ void ActivityTaskHandler::Handle(const wsv::PollActivityTaskQueueResponse& task)
   info.task_queue = task_queue_;
   info.task_token = task.task_token();
   info.attempt = task.attempt();
+  for (const auto& [key, value] : task.header().fields()) {
+    info.headers[key] = FromProtoPayload(value);
+  }
 
   auto heartbeat = [this, task_token = task.task_token()](const Payloads& details) -> bool {
     wsv::RecordActivityTaskHeartbeatRequest req;

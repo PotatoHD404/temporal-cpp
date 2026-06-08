@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <map>
 #include <string>
 #include <utility>
 
@@ -19,6 +20,7 @@ struct ActivityInfo {
   std::string run_id;
   std::string task_queue;
   std::string task_token;  // opaque; pass to Client::CompleteActivity for async completion
+  std::map<std::string, Payload> headers;  // context-propagation headers from the workflow
   int attempt = 1;
 };
 

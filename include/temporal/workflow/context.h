@@ -30,6 +30,7 @@ struct WorkflowInfo {
   std::string workflow_type;
   std::string task_queue;
   std::string ns;
+  std::map<std::string, Payload> headers;  // context-propagation headers
 };
 
 // The deterministic workflow context. Like the Go SDK's `workflow.Context`, all
