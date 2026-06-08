@@ -198,6 +198,9 @@ class WorkflowRunner final : public WorkflowOutbound {
     if (options.heartbeat_timeout.count() > 0) {
       *attr->mutable_heartbeat_timeout() = ToProtoDuration(options.heartbeat_timeout);
     }
+    if (options.retry_policy_set) {
+      *attr->mutable_retry_policy() = ToProtoRetryPolicy(options.retry_policy);
+    }
     commands_.push_back(std::move(c));
   }
 

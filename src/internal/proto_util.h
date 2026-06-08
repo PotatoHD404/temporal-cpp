@@ -7,6 +7,7 @@
 #include "temporal/api/common/v1/message.pb.h"
 #include "temporal/api/failure/v1/message.pb.h"
 
+#include <temporal/common/options.h>
 #include <temporal/common/payload.h>
 
 namespace temporal::internal {
@@ -21,6 +22,8 @@ tapi::common::v1::Payloads ToProtoPayloads(const Payloads& ps);
 Payloads FromProtoPayloads(const tapi::common::v1::Payloads& ps);
 
 gpb::Duration ToProtoDuration(std::chrono::nanoseconds d);
+
+tapi::common::v1::RetryPolicy ToProtoRetryPolicy(const RetryPolicy& policy);
 
 // Build a Failure carrying an ApplicationFailureInfo (the shape activity/workflow
 // application errors take on the wire).

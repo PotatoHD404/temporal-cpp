@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: brew install cmake grpc protobuf nlohmann-json temporal
+
+      - name: Configure
+        run: cmake --preset default
+
+      - name: Build
+        run: cmake --build build -j3
+
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure -LE integration
+
+      - name: Start Temporal dev server
+        run: |
+          temporal server start-dev --headless --log-level error &
+          echo $! > /tmp/temporal.pid
+          for i in $(seq 1 60); do
+            temporal workflow list >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+      - name: Integration tests
+        env:
+          TEMPORAL_INTEGRATION: "1"
+        run: ctest --test-dir build --output-on-failure -L integration
+
+      - name: Stop Temporal dev server
+        if: always()
+        run: kill "$(cat /tmp/temporal.pid)" 2>/dev/null || true

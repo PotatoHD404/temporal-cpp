@@ -137,6 +137,9 @@ WorkflowHandle Client::StartWorkflowPayloads(const StartWorkflowOptions& options
   if (options.task_timeout.count() > 0) {
     *req.mutable_workflow_task_timeout() = internal::ToProtoDuration(options.task_timeout);
   }
+  if (options.retry_policy_set) {
+    *req.mutable_retry_policy() = internal::ToProtoRetryPolicy(options.retry_policy);
+  }
 
   const auto resp = grpc_->StartWorkflowExecution(req);
   return {grpc_, converter_, ns_, workflow_id, resp.run_id()};

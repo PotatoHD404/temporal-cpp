@@ -86,8 +86,22 @@ git submodule update --init --recursive
 ```bash
 cmake --preset default          # configure (generates protobuf C++, fetches GoogleTest)
 cmake --build build -j          # build the library, example, and tests
-ctest --test-dir build          # run unit tests
+ctest --test-dir build -LE integration   # unit tests (no server needed)
 ```
+
+### Integration tests
+
+End-to-end tests (timers, activity-failure propagation, parallel activities,
+retry policy, terminate/signal/cancel) run against a real server and are gated so the
+default run needs none:
+
+```bash
+temporal server start-dev &                                   # dev server on :7233
+TEMPORAL_INTEGRATION=1 ctest --test-dir build -L integration  # run them
+```
+
+Without `TEMPORAL_INTEGRATION=1` they self-skip. CI (`.github/workflows/ci.yml`) runs both
+suites on macOS, standing up a dev server for the integration pass.
 
 ## Run the example end-to-end
 

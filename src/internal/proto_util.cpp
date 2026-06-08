@@ -53,6 +53,26 @@ gpb::Duration ToProtoDuration(std::chrono::nanoseconds d) {
   return out;
 }
 
+tapi::common::v1::RetryPolicy ToProtoRetryPolicy(const RetryPolicy& policy) {
+  tapi::common::v1::RetryPolicy out;
+  if (policy.initial_interval.count() > 0) {
+    *out.mutable_initial_interval() = ToProtoDuration(policy.initial_interval);
+  }
+  if (policy.backoff_coefficient > 0) {
+    out.set_backoff_coefficient(policy.backoff_coefficient);
+  }
+  if (policy.maximum_interval.count() > 0) {
+    *out.mutable_maximum_interval() = ToProtoDuration(policy.maximum_interval);
+  }
+  if (policy.maximum_attempts != 0) {
+    out.set_maximum_attempts(policy.maximum_attempts);
+  }
+  for (const auto& type : policy.non_retryable_error_types) {
+    out.add_non_retryable_error_types(type);
+  }
+  return out;
+}
+
 tapi::failure::v1::Failure MakeApplicationFailure(const std::string& message,
                                                   const std::string& type) {
   tapi::failure::v1::Failure f;

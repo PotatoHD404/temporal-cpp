@@ -15,3 +15,14 @@ target_link_libraries(temporal_tests PRIVATE temporal::sdk GTest::gtest_main)
 # large generated proto/gRPC archive, whose descriptor static-initialization can
 # exceed the discovery timeout on a cold first run.
 add_test(NAME temporal_tests COMMAND temporal_tests)
+
+# Integration tests run end-to-end against a real Temporal server. They self-skip
+# unless TEMPORAL_INTEGRATION=1 is set, and live in a separate binary + ctest
+# label so `ctest -LE integration` stays server-free.
+file(GLOB INTEGRATION_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/integration/*.cpp")
+if(INTEGRATION_SOURCES)
+  add_executable(temporal_integration_tests ${INTEGRATION_SOURCES})
+  target_link_libraries(temporal_integration_tests PRIVATE temporal::sdk GTest::gtest_main)
+  add_test(NAME temporal_integration_tests COMMAND temporal_integration_tests)
+  set_tests_properties(temporal_integration_tests PROPERTIES TIMEOUT 180 LABELS integration)
+endif()

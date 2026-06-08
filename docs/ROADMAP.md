@@ -11,11 +11,18 @@ priority/dependency.
 - Worker: register workflows/activities (plain `R(Context&, Args...)` functions), poller threads,
   `Start`/`Run`/`Stop`.
 - Workflows: sequential and parallel-await `ExecuteActivity<R>(...)`, timers (`NewTimer`/`Sleep`),
-  typed args/results, failure propagation, server-driven activity retries.
+  typed args/results, failure propagation, activity retries (custom `RetryPolicy` honored).
 - Activities: typed execution, application-error failures.
 - Data conversion: Nil / ByteSlice / JSON (nlohmann).
 - Engine: non-sticky history replay, deterministic command/event correlation, block-by-exception
   suspension.
+- Tested: 8 unit tests + 6 end-to-end integration tests (timer, single + parallel activities,
+  activity-failure propagation, RetryPolicy fail-fast, terminate, signal/cancel RPCs) — run against
+  a dev server via `TEMPORAL_INTEGRATION=1`, and in CI.
+
+> Coverage caveat: integration tests prove the happy paths and the failure/terminate paths listed
+> above. Signal/cancel are only asserted at the RPC level (the workflow side can't yet react), and
+> replay is exercised for short workflows only. Everything below is **not** implemented.
 
 ## Phase 1 — robustness & determinism hardening
 
