@@ -105,7 +105,7 @@ cache. This page is the honest accounting.
 
 | Capability | Status | Notes |
 |---|---|---|
-| TLS / mTLS / API-key auth | ❌ | insecure only |
+| TLS / mTLS / API-key auth | 🟡 | implemented (`ClientOptions::tls` + `api_key`, SslCredentials + per-call auth); **e2e-unverified locally** — no TLS Temporal server in the harness |
 | Interceptors (client + worker) | ❌ | |
 | Metrics | ❌ | |
 | Tracing / OpenTelemetry | ❌ | |

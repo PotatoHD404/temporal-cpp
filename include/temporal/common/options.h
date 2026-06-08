@@ -25,6 +25,17 @@ struct RetryPolicy {
   std::vector<std::string> non_retryable_error_types;
 };
 
+// TLS / mTLS settings for the client connection. Cert/key fields are PEM
+// *contents* (not file paths); leave server_ca_cert empty for the system trust
+// store. Set client_cert + client_key for mutual TLS.
+struct TlsConfig {
+  bool enabled = false;
+  std::string server_ca_cert;  // PEM root CA(s)
+  std::string client_cert;     // PEM client cert chain (mTLS)
+  std::string client_key;      // PEM client private key (mTLS)
+  std::string server_name;     // SNI / certificate name override (optional)
+};
+
 // Options for connecting a Client to the Temporal frontend service.
 struct ClientOptions {
   std::string target = "localhost:7233";
@@ -32,6 +43,8 @@ struct ClientOptions {
   std::string identity;        // default: "<pid>@<host>"
   std::shared_ptr<log::Logger> logger;            // default: console logger
   std::shared_ptr<DataConverter> data_converter;  // default: JSON converter
+  TlsConfig tls;        // disabled by default (insecure channel)
+  std::string api_key;  // sent as an "Authorization: Bearer <key>" header per RPC
 };
 
 // Options for `Client::StartWorkflow`.

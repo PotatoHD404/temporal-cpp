@@ -222,7 +222,8 @@ Client Client::Connect(const ClientOptions& options) {
   c.logger_ = options.logger ? options.logger : log::DefaultLogger();
   const std::string target =
       options.target.empty() ? std::string("localhost:7233") : options.target;
-  c.grpc_ = std::make_shared<internal::GrpcClient>(target, c.ns_, c.identity_);
+  c.grpc_ =
+      std::make_shared<internal::GrpcClient>(target, c.ns_, c.identity_, options.tls, options.api_key);
   return c;
 }
 

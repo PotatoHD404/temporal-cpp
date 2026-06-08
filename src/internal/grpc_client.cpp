@@ -16,11 +16,37 @@ namespace {
 // that becomes available is still delivered immediately (server-side long poll).
 constexpr int kPollSeconds = 5;
 
+}  // namespace
+
+GrpcClient::GrpcClient(const std::string& target, std::string ns, std::string identity,
+                       const TlsConfig& tls, std::string api_key)
+    : ns_(std::move(ns)), identity_(std::move(identity)), api_key_(std::move(api_key)) {
+  std::shared_ptr<grpc::ChannelCredentials> creds;
+  if (tls.enabled) {
+    grpc::SslCredentialsOptions ssl;
+    ssl.pem_root_certs = tls.server_ca_cert;   // empty -> system trust store
+    ssl.pem_private_key = tls.client_key;      // mTLS (optional)
+    ssl.pem_cert_chain = tls.client_cert;      // mTLS (optional)
+    creds = grpc::SslCredentials(ssl);
+  } else {
+    creds = grpc::InsecureChannelCredentials();
+  }
+  grpc::ChannelArguments args;
+  if (!tls.server_name.empty()) {
+    args.SetSslTargetNameOverride(tls.server_name);
+  }
+  stub_ = wsv::WorkflowService::NewStub(grpc::CreateCustomChannel(target, creds, args));
+}
+
 template <class Resp, class Invoke>
-Resp UnaryCall(const char* name, bool poll, Invoke&& invoke) {
+Resp GrpcClient::UnaryCall(const char* name, bool poll, Invoke&& invoke) const {
   grpc::ClientContext ctx;
   if (poll) {
     ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(kPollSeconds));
+  }
+  if (!api_key_.empty()) {
+    ctx.AddMetadata("authorization", "Bearer " + api_key_);
+    ctx.AddMetadata("temporal-namespace", ns_);
   }
   Resp resp;
   const grpc::Status status = std::forward<Invoke>(invoke)(&ctx, &resp);
@@ -31,14 +57,6 @@ Resp UnaryCall(const char* name, bool poll, Invoke&& invoke) {
     throw RpcError(std::string("rpc ") + name + " failed: " + status.error_message());
   }
   return resp;
-}
-
-}  // namespace
-
-GrpcClient::GrpcClient(const std::string& target, std::string ns, std::string identity)
-    : ns_(std::move(ns)), identity_(std::move(identity)) {
-  auto channel = grpc::CreateChannel(target, grpc::InsecureChannelCredentials());
-  stub_ = wsv::WorkflowService::NewStub(channel);
 }
 
 wsv::StartWorkflowExecutionResponse GrpcClient::StartWorkflowExecution(

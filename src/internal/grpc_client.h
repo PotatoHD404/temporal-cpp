@@ -3,6 +3,8 @@
 #include <memory>
 #include <string>
 
+#include <temporal/common/options.h>
+
 #include "temporal/api/workflowservice/v1/request_response.pb.h"
 #include "temporal/api/workflowservice/v1/service.grpc.pb.h"
 
@@ -16,7 +18,8 @@ namespace wsv = ::temporal::api::workflowservice::v1;
 // response; everything else throws RpcError on a non-OK status.
 class GrpcClient {
  public:
-  GrpcClient(const std::string& target, std::string ns, std::string identity);
+  GrpcClient(const std::string& target, std::string ns, std::string identity,
+             const TlsConfig& tls = {}, std::string api_key = {});
 
   const std::string& ns() const { return ns_; }
   const std::string& identity() const { return identity_; }
@@ -63,9 +66,15 @@ class GrpcClient {
       const wsv::UpdateWorkflowExecutionRequest& req);
 
  private:
+  // Issues one unary RPC, attaching auth metadata (Authorization + namespace) when
+  // an API key is configured. Defined in the .cpp (only instantiated there).
+  template <class Resp, class Invoke>
+  Resp UnaryCall(const char* name, bool poll, Invoke&& invoke) const;
+
   std::unique_ptr<wsv::WorkflowService::Stub> stub_;
   std::string ns_;
   std::string identity_;
+  std::string api_key_;
 };
 
 }  // namespace temporal::internal
