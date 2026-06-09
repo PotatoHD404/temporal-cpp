@@ -1783,6 +1783,71 @@ TEST_F(IntegrationTest, WorkflowInboundInterceptorWrapsExecutionAndReplays) {
   EXPECT_NO_THROW(replayer.ReplayWorkflowHistory(history_json));
 }
 
+// A workflow-outbound interceptor that injects a header on every ExecuteActivity.
+class HeaderInjectingOutbound : public temporal::interceptor::WorkflowOutboundInterceptor {
+ public:
+  explicit HeaderInjectingOutbound(temporal::interceptor::WorkflowOutboundInterceptor* next)
+      : temporal::interceptor::WorkflowOutboundInterceptor(next) {}
+  void ExecuteActivity(temporal::workflow::Context& ctx,
+                       temporal::interceptor::ExecuteActivityOutboundInput& in,
+                       temporal::interceptor::Header& header) override {
+    header["x-trace"] = ctx.data_converter().ToPayload(std::string("traced"));
+    next_->ExecuteActivity(ctx, in, header);
+  }
+};
+
+// An inbound interceptor whose Init wraps the outbound with the header injector.
+class OutboundInjectInbound : public temporal::interceptor::WorkflowInboundInterceptor {
+ public:
+  explicit OutboundInjectInbound(temporal::interceptor::WorkflowInboundInterceptor* next)
+      : temporal::interceptor::WorkflowInboundInterceptor(next) {}
+  void Init(temporal::interceptor::WorkflowOutboundInterceptor* outbound) override {
+    wrapped_ = std::make_unique<HeaderInjectingOutbound>(outbound);
+    next_->Init(wrapped_.get());
+  }
+
+ private:
+  std::unique_ptr<HeaderInjectingOutbound> wrapped_;
+};
+
+class OutboundInjectInterceptor : public temporal::interceptor::Interceptor {
+ public:
+  std::unique_ptr<temporal::interceptor::WorkflowInboundInterceptor> InterceptWorkflow(
+      temporal::interceptor::WorkflowInboundInterceptor* next) override {
+    return std::make_unique<OutboundInjectInbound>(next);
+  }
+};
+
+std::atomic<bool> g_activity_saw_trace_header{false};
+std::string HeaderCheckActivity(temporal::activity::Context& ctx, std::string) {
+  g_activity_saw_trace_header = ctx.GetInfo().headers.count("x-trace") > 0;
+  return "ok";
+}
+std::string HeaderCheckWorkflow(temporal::workflow::Context& ctx, std::string s) {
+  temporal::ActivityOptions o;
+  o.start_to_close_timeout = 10s;
+  return ctx.ExecuteActivity<std::string>(o, "HeaderCheck", s).Get();
+}
+
+// POSITIVE: a workflow-outbound interceptor injects a header that the scheduled
+// activity then receives (the tracing-propagation use case).
+TEST_F(IntegrationTest, WorkflowOutboundInterceptorInjectsActivityHeader) {
+  const auto tq = UniqueTaskQueue("wf-outbound");
+  g_activity_saw_trace_header = false;
+  temporal::WorkerOptions wo;
+  wo.interceptors.push_back(std::make_shared<OutboundInjectInterceptor>());
+  temporal::worker::Worker worker(*client_, tq, wo);
+  worker.RegisterWorkflow("HeaderCheckWorkflow", HeaderCheckWorkflow);
+  worker.RegisterActivity("HeaderCheck", HeaderCheckActivity);
+  worker.Start();
+  temporal::StartWorkflowOptions o;
+  o.task_queue = tq;
+  auto h = client_->StartWorkflow(o, "HeaderCheckWorkflow", std::string("x"));
+  EXPECT_EQ(h.Result<std::string>(), "ok");
+  EXPECT_TRUE(g_activity_saw_trace_header.load());  // outbound header reached the activity
+  worker.Stop();
+}
+
 // A failure converter that tags every error message, to prove the activity
 // failure path uses the configured converter.
 class WrappingFailureConverter : public temporal::FailureConverter {

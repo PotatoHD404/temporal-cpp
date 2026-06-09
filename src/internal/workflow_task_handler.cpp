@@ -73,12 +73,32 @@ struct ChildOutcome {
   std::string failure_message;
 };
 
+// Terminal workflow-outbound interceptor: the SDK performs the real outbound work
+// (scheduling) itself after the chain runs, so every method is a no-op here. The
+// chain's wrappers mutate the header before reaching this terminal.
+class RootWorkflowOutbound : public interceptor::WorkflowOutboundInterceptor {
+ public:
+  void ExecuteActivity(workflow::Context&, interceptor::ExecuteActivityOutboundInput&,
+                       interceptor::Header&) override {}
+  void ExecuteChildWorkflow(workflow::Context&, interceptor::ExecuteChildWorkflowInput&,
+                            interceptor::Header&) override {}
+  void SignalExternalWorkflow(workflow::Context&, interceptor::SignalExternalWorkflowInput&,
+                              interceptor::Header&) override {}
+  void CancelExternalWorkflow(workflow::Context&,
+                              interceptor::CancelExternalWorkflowInput&) override {}
+  void UpsertSearchAttributes(workflow::Context&,
+                              interceptor::UpsertSearchAttributesInput&) override {}
+};
+
 // Terminal workflow-inbound interceptor: runs the real workflow function. The
 // inbound chain wraps this; with no interceptors it is the head and the workflow
-// runs directly (no overhead).
+// runs directly (no overhead). Init captures the fully-wrapped outbound chain so
+// the runner can route in-workflow outbound calls (e.g. ExecuteActivity) through it.
 class RootWorkflowInbound : public interceptor::WorkflowInboundInterceptor {
  public:
   explicit RootWorkflowInbound(const worker::WorkflowFn& fn) : fn_(fn) {}
+  void Init(interceptor::WorkflowOutboundInterceptor* outbound) override { outbound_ = outbound; }
+  interceptor::WorkflowOutboundInterceptor* outbound() const { return outbound_; }
   Payloads ExecuteWorkflow(workflow::Context& ctx, interceptor::ExecuteWorkflowInput& in,
                            const interceptor::Header& /*header*/) override {
     return fn_(ctx, in.args);
@@ -86,6 +106,7 @@ class RootWorkflowInbound : public interceptor::WorkflowInboundInterceptor {
 
  private:
   const worker::WorkflowFn& fn_;
+  interceptor::WorkflowOutboundInterceptor* outbound_ = nullptr;
 };
 
 // A recorded MutableSideEffect marker, raw payloads (decoded by the runner which
@@ -489,7 +510,16 @@ class WorkflowRunner final : public WorkflowOutbound {
       }
       // scheduled but not yet resolved -> stays pending
     } else {
-      EmitScheduleActivity(id, activity_type, input, options);
+      // Run in-workflow outbound interceptors so they can augment the activity
+      // header (e.g. inject a trace span). The header is NOT determinism-matched
+      // (activities match on id+type), so this stays replay-safe.
+      std::map<std::string, Payload> header = info_.headers;
+      if (outbound_chain_ != nullptr) {
+        workflow::Context ctx(this, converter_);
+        interceptor::ExecuteActivityOutboundInput oin{std::string(activity_type), options, input};
+        outbound_chain_->ExecuteActivity(ctx, oin, header);
+      }
+      EmitScheduleActivity(id, activity_type, input, options, header);
     }
     activity_futures_[id] = state;  // so incremental completion events can resolve it
     return state;
@@ -855,6 +885,11 @@ class WorkflowRunner final : public WorkflowOutbound {
       // The chain + terminal live on the coroutine stack for the workflow's life.
       RootWorkflowInbound root(workflow_fn_);
       auto chain = interceptor::BuildWorkflowInboundChain(interceptors_, &root);
+      // Wire the outbound chain: inbound interceptors may wrap the (no-op) outbound
+      // terminal in Init; the runner routes in-workflow outbound calls through it.
+      RootWorkflowOutbound outbound_terminal;
+      chain.head()->Init(&outbound_terminal);
+      outbound_chain_ = root.outbound();  // valid while this RunBody frame is live
       interceptor::ExecuteWorkflowInput in{input_};
       interceptor::Header header(info_.headers);
       result_ = chain.head()->ExecuteWorkflow(ctx, in, header);
@@ -1012,7 +1047,8 @@ class WorkflowRunner final : public WorkflowOutbound {
   }
 
   void EmitScheduleActivity(const std::string& id, std::string_view activity_type,
-                            const Payloads& input, const ActivityOptions& options) {
+                            const Payloads& input, const ActivityOptions& options,
+                            const std::map<std::string, Payload>& header) {
     cmd::Command c;
     c.set_command_type(enums::COMMAND_TYPE_SCHEDULE_ACTIVITY_TASK);
     auto* attr = c.mutable_schedule_activity_task_command_attributes();
@@ -1023,7 +1059,7 @@ class WorkflowRunner final : public WorkflowOutbound {
     if (!input.empty()) {
       *attr->mutable_input() = ToProtoPayloads(input);
     }
-    for (const auto& [key, value] : info_.headers) {  // auto-propagate context headers
+    for (const auto& [key, value] : header) {  // context headers (+ outbound-interceptor additions)
       (*attr->mutable_header()->mutable_fields())[key] = ToProtoPayload(value);
     }
     if (options.schedule_to_close_timeout.count() > 0) {
@@ -1169,6 +1205,9 @@ class WorkflowRunner final : public WorkflowOutbound {
   std::size_t local_activity_seq_ = 0;             // ordinal of the next LocalActivity call
   LocalActivityResolver local_activity_resolver_;  // resolves activity fns for inline execution
   std::vector<interceptor::Interceptor*> interceptors_;  // workflow-inbound chain (non-owning)
+  // The fully-wrapped workflow-outbound chain, captured during RunBody's Init and
+  // valid for the workflow's lifetime (the wrappers live on the coroutine stack).
+  interceptor::WorkflowOutboundInterceptor* outbound_chain_ = nullptr;
   std::unique_ptr<Coroutine> coroutine_;  // declared last -> destroyed first (tears down thread)
 };
 
