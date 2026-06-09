@@ -15,6 +15,8 @@
 #include <temporal/interceptor/interceptor.h>
 #include <temporal/temporal.h>
 
+#include "temporal/api/failure/v1/message.pb.h"
+
 namespace {
 
 using namespace std::chrono_literals;
@@ -1727,6 +1729,49 @@ TEST_F(IntegrationTest, ActivityInboundInterceptorWrapsExecution) {
   auto h = client_->StartWorkflow(o, "EchoWorkflow", std::string("hi"));
   EXPECT_EQ(h.Result<std::string>(), "hi");
   EXPECT_GT(g_intercepted_activities.load(), 0);  // the Echo activity was intercepted
+  worker.Stop();
+}
+
+// A failure converter that tags every error message, to prove the activity
+// failure path uses the configured converter.
+class WrappingFailureConverter : public temporal::FailureConverter {
+ public:
+  void ErrorToFailure(const std::exception& error,
+                      temporal::api::failure::v1::Failure& out) const override {
+    out.set_message(std::string("WRAPPED:") + error.what());
+    out.mutable_application_failure_info()->set_type("Wrapped");
+  }
+  std::exception_ptr FailureToError(
+      const temporal::api::failure::v1::Failure& failure) const override {
+    return std::make_exception_ptr(temporal::ApplicationError(failure.message(), "Wrapped"));
+  }
+};
+
+// POSITIVE: a custom failure converter on the worker's data converter encodes
+// activity failures (the wrapped message propagates to the workflow result).
+TEST_F(IntegrationTest, CustomFailureConverterEncodesActivityFailure) {
+  const char* addr = std::getenv("TEMPORAL_ADDRESS");
+  temporal::ClientOptions opt;
+  opt.target = (addr != nullptr) ? addr : "localhost:7233";
+  auto converter = temporal::DataConverter::Default();
+  converter->WithFailureConverter(std::make_shared<WrappingFailureConverter>());
+  opt.data_converter = converter;
+  auto fc_client = temporal::client::Client::Connect(opt);
+
+  const auto tq = UniqueTaskQueue("failconv");
+  temporal::worker::Worker worker(fc_client, tq);
+  worker.RegisterWorkflow("FailWorkflow", FailWorkflow);
+  worker.RegisterActivity("Boom", BoomActivity);
+  worker.Start();
+  temporal::StartWorkflowOptions o;
+  o.task_queue = tq;
+  auto handle = fc_client.StartWorkflow(o, "FailWorkflow", std::string("x"));
+  try {
+    handle.Result<std::string>();
+    FAIL() << "expected the workflow to fail";
+  } catch (const temporal::WorkflowFailedError& e) {
+    EXPECT_NE(std::string(e.what()).find("WRAPPED:boom"), std::string::npos);
+  }
   worker.Stop();
 }
 

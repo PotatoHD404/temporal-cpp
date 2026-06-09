@@ -9,6 +9,7 @@
 
 #include <temporal/activity/activity.h>
 #include <temporal/common/errors.h>
+#include <temporal/converter/failure_converter.h>
 #include <temporal/interceptor/interceptor.h>
 
 namespace temporal::internal {
@@ -107,7 +108,11 @@ void ActivityTaskHandler::Handle(const wsv::PollActivityTaskQueueResponse& task)
     wsv::RespondActivityTaskFailedRequest req;
     req.set_task_token(task.task_token());
     req.set_identity(grpc_->identity());
-    *req.mutable_failure() = MakeApplicationFailure(e.what(), e.type());
+    if (const auto& fc = converter_->failure_converter()) {
+      fc->ErrorToFailure(e, *req.mutable_failure());  // custom failure encoding
+    } else {
+      *req.mutable_failure() = MakeApplicationFailure(e.what(), e.type());
+    }
     grpc_->RespondActivityTaskFailed(req);
   } catch (const std::exception& e) {
     logger_->Error("activity raised an exception",
@@ -115,7 +120,11 @@ void ActivityTaskHandler::Handle(const wsv::PollActivityTaskQueueResponse& task)
     wsv::RespondActivityTaskFailedRequest req;
     req.set_task_token(task.task_token());
     req.set_identity(grpc_->identity());
-    *req.mutable_failure() = MakeApplicationFailure(e.what(), "std::exception");
+    if (const auto& fc = converter_->failure_converter()) {
+      fc->ErrorToFailure(e, *req.mutable_failure());  // custom failure encoding
+    } else {
+      *req.mutable_failure() = MakeApplicationFailure(e.what(), "std::exception");
+    }
     grpc_->RespondActivityTaskFailed(req);
   }
 }
