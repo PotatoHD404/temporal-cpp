@@ -1,4 +1,4 @@
-# temporal-cpp
+# temporal-cpp-sdk
 
 An **experimental, native C++ SDK for [Temporal](https://temporal.io)** — a from-scratch
 port modeled on the official [Go SDK](https://github.com/temporalio/sdk-go), talking directly
