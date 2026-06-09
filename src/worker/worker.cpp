@@ -1,10 +1,7 @@
 #include <temporal/worker/worker.h>
 
-#include <chrono>
 #include <memory>
-#include <stop_token>
 #include <string>
-#include <thread>
 #include <utility>
 
 #include "internal/worker_impl.h"
@@ -37,14 +34,6 @@ void Worker::RegisterNexusOperationFn(std::string service, std::string operation
 void Worker::Start() { impl_->Start(); }
 
 void Worker::Run() { impl_->Run(); }
-
-void Worker::Run(std::stop_token token) {
-  impl_->Start();
-  while (!token.stop_requested()) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  }
-  impl_->Stop();
-}
 
 void Worker::Stop() { impl_->Stop(); }
 

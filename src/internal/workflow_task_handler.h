@@ -67,6 +67,14 @@ class WorkflowTaskHandler {
     }
   }
 
+  // Called (if set) when a workflow task is aborted for overrunning the deadlock
+  // timeout. The worker wires this to emit the deadlock metric; the per-resume
+  // `deadlock_timeout` is the authoritative detector (there is no separate
+  // watchdog thread).
+  void SetDeadlockReporter(std::function<void()> reporter) {
+    deadlock_reporter_ = std::move(reporter);
+  }
+
   void Handle(const wsv::PollWorkflowTaskQueueResponse& task);
 
   // Replay a recorded history against the registered workflow and return the
@@ -88,6 +96,7 @@ class WorkflowTaskHandler {
   std::chrono::steady_clock::duration deadlock_timeout_;  // 0 => unbounded task execution
   std::unordered_map<std::string, worker::WorkflowFn> workflows_;
   LocalActivityResolver local_activity_resolver_;
+  std::function<void()> deadlock_reporter_;  // emits the deadlock metric on abort
   std::vector<std::shared_ptr<interceptor::Interceptor>> interceptors_;
   std::vector<interceptor::Interceptor*> interceptor_ptrs_;  // non-owning, for the chain builder
 

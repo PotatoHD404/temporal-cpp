@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
-#include <stop_token>
 #include <string>
 #include <tuple>
 #include <type_traits>
@@ -93,10 +92,8 @@ class Worker {
 
   void Start();  // start pollers (non-blocking)
   void Run();    // start pollers and block until SIGINT or Stop()
-  // Start pollers and block until the stop token is triggered, then drain — for
-  // `std::jthread t([&](std::stop_token st){ worker.Run(st); });` (cancellable,
-  // no global SIGINT handler).
-  void Run(std::stop_token token);
+  // Cancellable lifecycle without a global SIGINT handler: Start() returns
+  // immediately, then call Stop() from any thread to signal the pollers and drain.
   void Stop();  // signal pollers to stop and join
 
   // Replay a recorded workflow history (Temporal's JSON, e.g. from

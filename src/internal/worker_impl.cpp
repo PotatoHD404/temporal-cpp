@@ -59,6 +59,13 @@ WorkerImpl::WorkerImpl(std::shared_ptr<GrpcClient> grpc, std::shared_ptr<DataCon
   // Inbound interceptors run around every activity / workflow execution.
   activity_handler_.SetInterceptors(options_.interceptors);
   workflow_handler_.SetInterceptors(options_.interceptors);
+  // A workflow task that overruns the deadlock timeout is detected on its resume
+  // (the per-resume bound) and aborted; report it via the deadlock metric.
+  workflow_handler_.SetDeadlockReporter([this] {
+    if (auto* metrics = options_.metrics_handler.get()) {
+      metrics->Counter("temporal_workflow_task_deadlock", 1, {});
+    }
+  });
   if (options_.enable_sessions) {
     RegisterSessionActivities();
   }
@@ -166,9 +173,6 @@ void WorkerImpl::Start() {
   if (nexus_handler_.has_operations()) {
     // Single always-hot Nexus poller (Nexus tasks are infrequent vs. activities).
     threads_.emplace_back([this] { NexusPollLoop(); });
-  }
-  if (options_.deadlock_detection_timeout.count() > 0 && workflow_handler_.has_workflows()) {
-    threads_.emplace_back([this] { DeadlockWatchLoop(); });
   }
   logger_->Info("worker started", {log::F("task_queue", task_queue_)});
 }
@@ -334,14 +338,7 @@ void WorkerImpl::WorkflowPollLoop(bool sticky, int index) {
         // Time the task waited locally (gate/rate) between receipt and execution.
         metrics->Timer("temporal_workflow_task_schedule_to_start_latency", start - recv, wf_tags);
       }
-      const bool watch = options_.deadlock_detection_timeout.count() > 0;
-      if (watch) {
-        deadlock_watch_.Begin();
-      }
       workflow_handler_.Handle(resp);
-      if (watch) {
-        deadlock_watch_.End();
-      }
       if (metrics) {
         const auto now = std::chrono::steady_clock::now();
         metrics->Timer("temporal_workflow_task_execution_latency", now - start, {});
@@ -353,7 +350,6 @@ void WorkerImpl::WorkflowPollLoop(bool sticky, int index) {
       if (scalable && !slot_released) {
         wf_scaler_.Release();  // the poll RPC itself threw; free the slot
       }
-      deadlock_watch_.End();  // clear this thread's entry if Handle threw
       if (stop_.load()) {
         break;
       }
@@ -362,30 +358,6 @@ void WorkerImpl::WorkflowPollLoop(bool sticky, int index) {
       }
       logger_->Error("workflow poll loop error", {log::F("error", e.what())});
       std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
-  }
-}
-
-void WorkerImpl::DeadlockWatchLoop() {
-  auto* metrics = options_.metrics_handler.get();
-  const auto deadline = options_.deadlock_detection_timeout;
-  // Poll a few times per deadline window so an overrun is reported promptly, but
-  // never faster than 50ms (and react quickly to Stop()).
-  const auto interval = std::max(std::chrono::milliseconds(50),
-                                 std::chrono::duration_cast<std::chrono::milliseconds>(deadline) / 4);
-  while (!stop_.load()) {
-    std::this_thread::sleep_for(interval);
-    if (stop_.load()) {
-      break;
-    }
-    const int overruns = deadlock_watch_.ReportOverruns(deadline);
-    if (overruns > 0) {
-      logger_->Error("possible workflow deadlock: a task exceeded its deadline",
-                     {log::F("task_queue", task_queue_),
-                      log::F("timeout_ms", std::to_string(deadline.count()))});
-      if (metrics != nullptr) {
-        metrics->Counter("temporal_workflow_task_deadlock", overruns, {});
-      }
     }
   }
 }

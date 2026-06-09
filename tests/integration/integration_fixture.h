@@ -10,7 +10,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
-#include <stop_token>
 #include <string>
 #include <thread>
 
@@ -48,9 +47,10 @@ class IntegrationTest : public ::testing::Test {
     const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
     const std::string name =
         info != nullptr ? std::string(info->test_suite_name()) + "." + info->name() : "?";
-    watchdog_ = std::jthread([name](const std::stop_token& stop) {
+    watchdog_stop_.store(false);
+    watchdog_ = std::thread([this, name] {
       const auto deadline = std::chrono::steady_clock::now() + kPerTestTimeout;
-      while (!stop.stop_requested()) {
+      while (!watchdog_stop_.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
         if (std::chrono::steady_clock::now() >= deadline) {
           std::fprintf(stderr, "\n[ TIMEOUT ] integration test %s exceeded %llds; aborting\n",
@@ -62,8 +62,14 @@ class IntegrationTest : public ::testing::Test {
     });
   }
 
-  void TearDown() override { watchdog_.request_stop(); }
+  void TearDown() override {
+    watchdog_stop_.store(true);
+    if (watchdog_.joinable()) {
+      watchdog_.join();
+    }
+  }
 
   std::unique_ptr<temporal::client::Client> client_;
-  std::jthread watchdog_;
+  std::atomic<bool> watchdog_stop_{false};
+  std::thread watchdog_;
 };

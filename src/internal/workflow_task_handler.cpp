@@ -1613,6 +1613,9 @@ void WorkflowTaskHandler::Handle(const wsv::PollWorkflowTaskQueueResponse& task)
     logger_->Error("workflow deadlock: task exceeded the deadlock timeout; aborting",
                    {log::F("workflow_id", info.workflow_id),
                     log::F("workflow_type", info.workflow_type)});
+    if (deadlock_reporter_) {
+      deadlock_reporter_();  // emit the deadlock metric (set by the worker)
+    }
     r->AbandonCoroutine();
     {
       const std::lock_guard<std::mutex> lock(cache_mu_);

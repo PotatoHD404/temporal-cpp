@@ -7,7 +7,6 @@
 #include <memory>
 #include <random>
 #include <stdexcept>
-#include <stop_token>
 #include <string>
 #include <thread>
 
@@ -1976,8 +1975,10 @@ std::string BlockingWorkflow(temporal::workflow::Context&, int ms) {
   return "done";
 }
 
-// POSITIVE: a workflow task that overruns the deadlock deadline is reported via
-// the deadlock metric (detection only — the task still runs to completion).
+// POSITIVE: a workflow task that overruns the deadlock deadline is detected on
+// its resume, reported via the deadlock metric, and ABORTED (the task is failed
+// so the server reschedules it). A workflow that deterministically blocks its
+// thread is aborted on every attempt and never completes, but the metric fires.
 TEST_F(IntegrationTest, DeadlockDetectionReportsOverrunningTask) {
   const auto tq = UniqueTaskQueue("deadlock");
   g_deadlock_metric = 0;
@@ -1990,8 +1991,12 @@ TEST_F(IntegrationTest, DeadlockDetectionReportsOverrunningTask) {
   temporal::StartWorkflowOptions o;
   o.task_queue = tq;
   auto h = client_->StartWorkflow(o, "BlockingWorkflow", 1500);  // 1.5s >> 300ms deadline
-  EXPECT_EQ(h.Result<std::string>(), "done");
-  EXPECT_GT(g_deadlock_metric.load(), 0);  // the watchdog flagged the overrun
+  // The overrun is detected + reported on every aborted attempt; wait for it.
+  for (int i = 0; i < 100 && g_deadlock_metric.load() == 0; ++i) {
+    std::this_thread::sleep_for(100ms);
+  }
+  EXPECT_GT(g_deadlock_metric.load(), 0);  // the watchdog flagged + aborted the overrun
+  h.Terminate("test cleanup");  // never completes on its own (aborted on every retry)
   worker.Stop();
 }
 
@@ -2296,19 +2301,21 @@ TEST_F(IntegrationTest, WorkerIsMovable) {
   w2.Stop();
 }
 
-// POSITIVE: Worker::Run(std::stop_token) drives the worker on a std::jthread and
-// cancels cleanly when the token is triggered (no global SIGINT handler).
-TEST_F(IntegrationTest, WorkerRunWithStopToken) {
-  const auto tq = UniqueTaskQueue("stoptoken");
+// POSITIVE: a worker started with Start() serves a workflow, and Stop() invoked
+// from another thread cancels and drains cleanly (the cancellable lifecycle
+// without a global SIGINT handler).
+TEST_F(IntegrationTest, WorkerStopFromAnotherThread) {
+  const auto tq = UniqueTaskQueue("stopthread");
   temporal::worker::Worker worker(*client_, tq);
   worker.RegisterWorkflow("EchoWorkflow", EchoWorkflow);
   worker.RegisterActivity("Echo", EchoActivity);
-  std::jthread runner([&](std::stop_token st) { worker.Run(st); });
+  worker.Start();
   temporal::StartWorkflowOptions o;
   o.task_queue = tq;
   auto h = client_->StartWorkflow(o, "EchoWorkflow", std::string("via-run"));
   EXPECT_EQ(h.Result<std::string>(), "via-run");
-  runner.request_stop();  // Run() returns + drains; the jthread joins on scope exit
+  std::thread stopper([&] { worker.Stop(); });  // drains the pollers from off-thread
+  stopper.join();
 }
 
 // A workflow written in the C++20 coroutine style: workflow_task + co_await + co_return.
