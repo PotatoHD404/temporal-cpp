@@ -301,4 +301,57 @@ wsv::UpdateWorkerBuildIdCompatibilityResponse GrpcClient::UpdateWorkerBuildIdCom
       });
 }
 
+wsv::GetWorkerVersioningRulesResponse GrpcClient::GetWorkerVersioningRules(
+    const wsv::GetWorkerVersioningRulesRequest& req) {
+  return UnaryCall<wsv::GetWorkerVersioningRulesResponse>(
+      "GetWorkerVersioningRules", false,
+      [&](grpc::ClientContext* c, wsv::GetWorkerVersioningRulesResponse* p) {
+        return stub_->GetWorkerVersioningRules(c, req, p);
+      });
+}
+
+wsv::UpdateWorkerVersioningRulesResponse GrpcClient::UpdateWorkerVersioningRules(
+    const wsv::UpdateWorkerVersioningRulesRequest& req) {
+  return UnaryCall<wsv::UpdateWorkerVersioningRulesResponse>(
+      "UpdateWorkerVersioningRules", false,
+      [&](grpc::ClientContext* c, wsv::UpdateWorkerVersioningRulesResponse* p) {
+        return stub_->UpdateWorkerVersioningRules(c, req, p);
+      });
+}
+
+wsv::StartBatchOperationResponse GrpcClient::StartBatchOperation(
+    const wsv::StartBatchOperationRequest& req) {
+  return UnaryCall<wsv::StartBatchOperationResponse>(
+      "StartBatchOperation", false,
+      [&](grpc::ClientContext* c, wsv::StartBatchOperationResponse* p) {
+        return stub_->StartBatchOperation(c, req, p);
+      });
+}
+
+wsv::StopBatchOperationResponse GrpcClient::StopBatchOperation(
+    const wsv::StopBatchOperationRequest& req) {
+  return UnaryCall<wsv::StopBatchOperationResponse>(
+      "StopBatchOperation", false, [&](grpc::ClientContext* c, wsv::StopBatchOperationResponse* p) {
+        return stub_->StopBatchOperation(c, req, p);
+      });
+}
+
+wsv::DescribeBatchOperationResponse GrpcClient::DescribeBatchOperation(
+    const wsv::DescribeBatchOperationRequest& req) {
+  return UnaryCall<wsv::DescribeBatchOperationResponse>(
+      "DescribeBatchOperation", false,
+      [&](grpc::ClientContext* c, wsv::DescribeBatchOperationResponse* p) {
+        return stub_->DescribeBatchOperation(c, req, p);
+      });
+}
+
+wsv::ListBatchOperationsResponse GrpcClient::ListBatchOperations(
+    const wsv::ListBatchOperationsRequest& req) {
+  return UnaryCall<wsv::ListBatchOperationsResponse>(
+      "ListBatchOperations", false,
+      [&](grpc::ClientContext* c, wsv::ListBatchOperationsResponse* p) {
+        return stub_->ListBatchOperations(c, req, p);
+      });
+}
+
 }  // namespace temporal::internal

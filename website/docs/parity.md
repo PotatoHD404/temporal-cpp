@@ -30,7 +30,7 @@ cache. This page is the honest accounting.
 | Signal-with-start | ✅ | `Client::SignalWithStartWorkflow` |
 | List / count / describe workflows | ✅ | `Describe`, `ListWorkflows`, `CountWorkflows` (visibility query) |
 | Reset workflow | ✅ | `Client::ResetWorkflow` (ResetWorkflowExecution); e2e-verified |
-| Batch operations | ❌ | |
+| Batch operations | ✅ | `StartBatchTerminate`/`StartBatchCancel` + `Describe`/`List`; e2e-verified |
 | Schedules client | ✅ | create / describe / delete / update / list / trigger / pause / unpause (interval spec) |
 | Operator & Cloud services | ❌ | |
 
@@ -47,7 +47,7 @@ cache. This page is the honest accounting.
 | Graceful drain | ✅ | `graceful_shutdown_timeout`; Stop() drains in-flight tasks; e2e-verified |
 | Poller autoscaling | 🟡 | conservative idle-park within the fixed poller bounds; not true elasticity |
 | Worker Build-ID compatibility (v0.1) | ✅ | `Get/Update/PromoteWorkerBuildIdCompatibility`; e2e-verified |
-| Worker versioning rules / deployments | ❌ | newer rules-based versioning + deployments API |
+| Worker versioning rules / deployments | 🟡 | assignment rules (`InsertWorkerAssignmentRule`/`GetWorkerVersioningRules`) ✅ e2e; redirect rules + deployments ❌ |
 | Session workers | 🟡 | host-unique session-queue routing + cap; no session lifecycle (create/complete/pin) |
 
 ## Workflow authoring
@@ -66,7 +66,7 @@ cache. This page is the honest accounting.
 | Observe cancellation (`IsCancelled`) | ✅ | |
 | Cancellation scopes / propagation | ✅ | `AwaitCancellation` + timer / activity / child-workflow `Future::Cancel` |
 | `GetVersion` / patching | ✅ | marker-based; `kDefaultVersion` on pre-version history |
-| SideEffect / MutableSideEffect | 🟡 | `SideEffect` ✅ (marker record/replay); MutableSideEffect ❌ |
+| SideEffect / MutableSideEffect | ✅ | both marker-based; `MutableSideEffect` is id-keyed and records only when the value changes |
 | Local activities | ❌ | |
 | External-workflow signal/cancel | ✅ | `CancelExternalWorkflow` + `SignalExternalWorkflow` |
 | Search attributes / memo / upsert | ✅ | memo ✅; start-time + workflow `UpsertSearchAttributes` ✅ (`sa::` typed helpers) |
@@ -110,9 +110,9 @@ cache. This page is the honest accounting.
 | Capability | Status | Notes |
 |---|---|---|
 | TLS / mTLS / API-key auth | 🟡 | implemented (`ClientOptions::tls` + `api_key`, SslCredentials + per-call auth); **e2e-unverified locally** — no TLS Temporal server in the harness |
-| Interceptors (client + worker) | ❌ | |
+| Interceptors (client + worker) | 🟡 | chain framework (workflow/activity/client inbound+outbound) + base no-ops, unit-tested; not yet wired into live call paths |
 | Metrics | 🟡 | `MetricsHandler` (counter/gauge/timer): task counters + execution-latency timers + in-flight gauge + poll success/timeout counters; e2e-verified; not the full Go metric set |
-| Tracing / OpenTelemetry | ❌ | |
+| Tracing / OpenTelemetry | 🟡 | `Tracer`/`Span` interface + `TracingInterceptor` (inject/extract via headers), unit-tested; no OTel exporter bundled; not yet wired |
 | Structured logging | ✅ | pluggable `log::Logger` |
 | Test framework (time-skip, replayer) | 🟡 | replayer ✅ (`Worker::ReplayWorkflowHistory`); time-skip ❌ |
 | Schedules | ✅ | full client lifecycle (create/describe/delete/update/list/trigger/pause); calendar/cron specs ❌ |

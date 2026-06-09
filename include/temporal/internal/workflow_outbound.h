@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -24,6 +25,12 @@ struct WorkflowInfo;
 }
 
 namespace internal {
+
+// What a MutableSideEffect call should do, decided by the engine from history:
+//   ReplayChange   — this call recorded a new value in history; use it, don't run fn.
+//   ReplayUnchanged — this call did not change the value in history; reuse current.
+//   Live           — beyond recorded history; the caller runs fn and records on change.
+enum class MutableSideEffectStep : std::uint8_t { ReplayChange, ReplayUnchanged, Live };
 
 // Result slot for an in-flight workflow operation (activity or timer). Resolved
 // by the workflow task handler when the matching history event is replayed.
@@ -140,6 +147,17 @@ class WorkflowOutbound {
   // selects `max_supported` on first (live) execution and records a marker; on
   // replay of history that predates the call, returns kDefaultVersion (-1).
   virtual int GetVersion(const std::string& change_id, int min_supported, int max_supported) = 0;
+
+  // MutableSideEffect: like SideEffect but keyed by `id` and only records a new
+  // marker when the value changes. Begin decides (from history) whether this call
+  // replays a recorded change, replays unchanged, or is live; for replay it sets
+  // `value_out` to the value to return, and for the live path it sets
+  // `has_current`/`value_out` to the current value (if any) so the caller can
+  // compare. Record is called only on the live path: `changed` true emits a
+  // marker and updates the current value; false advances bookkeeping only.
+  virtual MutableSideEffectStep BeginMutableSideEffect(const std::string& id, Payload& value_out,
+                                                       bool& has_current) = 0;
+  virtual void RecordMutableSideEffect(const std::string& id, bool changed, const Payload& value) = 0;
 
   virtual const workflow::WorkflowInfo& Info() const = 0;
   virtual log::Logger& Logger() const = 0;

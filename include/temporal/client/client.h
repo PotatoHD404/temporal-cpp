@@ -100,6 +100,23 @@ class WorkflowHandle {
   std::string run_id_;
 };
 
+// The assignment rules on a task queue plus the conflict token to pass to a
+// subsequent UpdateWorkerVersioningRules call (rules-based worker versioning).
+struct WorkerVersioningRules {
+  std::vector<std::string> assignment_rule_target_build_ids;
+  std::string conflict_token;  // bytes; opaque, echoed back on update
+};
+
+// A point-in-time snapshot of a batch operation, returned by
+// Client::DescribeBatchOperation.
+struct BatchOperationDescription {
+  std::string job_id;
+  std::string state;  // e.g. "Running", "Completed", "Failed"
+  std::int64_t total_operations = 0;
+  std::int64_t completed_operations = 0;
+  std::int64_t failed_operations = 0;
+};
+
 // A client connection to the Temporal frontend service. Cheap to copy (shared
 // gRPC channel). Mirrors the Go SDK's `client.Client`.
 class Client {
@@ -161,6 +178,27 @@ class Client {
   void UpdateWorkerBuildIdCompatibility(const std::string& task_queue, const std::string& build_id);
   // Promote the existing set that already contains `build_id` to be the default.
   void PromoteWorkerBuildIdSet(const std::string& task_queue, const std::string& build_id);
+
+  // Rules-based worker versioning (distinct from the build-id-set API above).
+  // Read the assignment + redirect rules currently configured on `task_queue`.
+  WorkerVersioningRules GetWorkerVersioningRules(const std::string& task_queue);
+  // Insert an assignment rule at the head of the list routing new executions to
+  // `target_build_id`. (The server may require worker-versioning dynamic config.)
+  void InsertWorkerAssignmentRule(const std::string& task_queue,
+                                  const std::string& target_build_id);
+
+  // Batch operations: act on every workflow matched by a visibility `query`.
+  // `job_id` identifies the batch for Describe/Stop; reuse it to poll progress.
+  // Terminate every workflow matching `visibility_query`.
+  void StartBatchTerminate(const std::string& job_id, const std::string& visibility_query,
+                           const std::string& reason);
+  // Request cancellation of every workflow matching `visibility_query`.
+  void StartBatchCancel(const std::string& job_id, const std::string& visibility_query,
+                        const std::string& reason);
+  // Snapshot of a batch operation's state and progress counts.
+  BatchOperationDescription DescribeBatchOperation(const std::string& job_id);
+  // All batch operation job ids in the namespace (pages through results).
+  std::vector<std::string> ListBatchOperations();
 
   // Complete or fail an activity that deferred completion via
   // activity::Context::SetWillCompleteAsync(), identified by its task token

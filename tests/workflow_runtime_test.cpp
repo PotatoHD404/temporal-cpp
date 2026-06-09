@@ -103,6 +103,40 @@ class FakeEnv : public internal::WorkflowOutbound {
     return max_supported;
   }
 
+  internal::MutableSideEffectStep BeginMutableSideEffect(const std::string& id, Payload& value_out,
+                                                         bool& has_current) override {
+    const int idx = static_cast<int>(mse_call_count[id]++);
+    const auto rit = recorded_mutable_side_effects.find(id);
+    if (rit != recorded_mutable_side_effects.end()) {
+      const auto& list = rit->second;
+      const std::size_t cur = mse_cursor[id];
+      if (cur < list.size() && list[cur].first == idx) {
+        mse_current[id] = list[cur].second;
+        mse_cursor[id] = cur + 1;
+        value_out = mse_current[id];
+        return internal::MutableSideEffectStep::ReplayChange;
+      }
+      if (cur < list.size()) {
+        value_out = mse_current[id];
+        return internal::MutableSideEffectStep::ReplayUnchanged;
+      }
+    }
+    const auto cit = mse_current.find(id);
+    has_current = cit != mse_current.end();
+    if (has_current) {
+      value_out = cit->second;
+    }
+    return internal::MutableSideEffectStep::Live;
+  }
+
+  void RecordMutableSideEffect(const std::string& id, bool changed, const Payload& value) override {
+    if (!changed) {
+      return;
+    }
+    mse_current[id] = value;
+    emitted_mutable_side_effects.emplace_back(id, value);
+  }
+
   bool TryConsumeSignal(std::string_view name, Payloads& out) override {
     if (std::string(name) != signal_name || signal_cursor >= signal_queue.size()) {
       return false;
@@ -143,6 +177,12 @@ class FakeEnv : public internal::WorkflowOutbound {
   std::vector<Payload> emitted_side_effects;  // captured on the live path
   std::unordered_map<std::string, int> recorded_versions;  // preset to simulate replay
   std::unordered_map<std::string, int> emitted_versions;   // captured on the live path
+  // MutableSideEffect: preset recorded_* to simulate replay; emitted_* captures live records.
+  std::unordered_map<std::string, std::vector<std::pair<int, Payload>>> recorded_mutable_side_effects;
+  std::vector<std::pair<std::string, Payload>> emitted_mutable_side_effects;
+  std::unordered_map<std::string, std::size_t> mse_call_count;
+  std::unordered_map<std::string, std::size_t> mse_cursor;
+  std::unordered_map<std::string, Payload> mse_current;
   internal::QueryFn update_validator;                      // captured registered validator
 };
 
@@ -296,6 +336,49 @@ TEST(WorkflowRuntime, SideEffectReplaysRecordedValueWithoutRunningFunction) {
   EXPECT_EQ(v, 7);      // recorded value, not 42
   EXPECT_EQ(calls, 0);  // the function never ran on replay
   EXPECT_TRUE(env.emitted_side_effects.empty());
+}
+
+TEST(WorkflowRuntime, MutableSideEffectRecordsOnlyOnChange) {
+  FakeEnv env;
+  const auto dc = DataConverter::Default();
+  workflow::Context ctx(&env, dc.get());
+  int calls = 0;
+  EXPECT_EQ(ctx.MutableSideEffect("cfg", [&] { return ++calls, 1; }), 1);  // first: changes
+  EXPECT_EQ(ctx.MutableSideEffect("cfg", [&] { return ++calls, 1; }), 1);  // same: no marker
+  EXPECT_EQ(ctx.MutableSideEffect("cfg", [&] { return ++calls, 2; }), 2);  // differs: marker
+  EXPECT_EQ(calls, 3);                                     // fn runs on every live call
+  ASSERT_EQ(env.emitted_mutable_side_effects.size(), 2U);  // only the two changes recorded
+  EXPECT_EQ(dc->FromPayload<int>(env.emitted_mutable_side_effects[0].second), 1);
+  EXPECT_EQ(dc->FromPayload<int>(env.emitted_mutable_side_effects[1].second), 2);
+}
+
+TEST(WorkflowRuntime, MutableSideEffectReplaysRecordedChangesWithoutRunningFunction) {
+  FakeEnv env;
+  const auto dc = DataConverter::Default();
+  // History for "cfg": changed at call 0 -> 10, then at call 2 -> 20.
+  env.recorded_mutable_side_effects["cfg"] = {{0, dc->ToPayload(10)}, {2, dc->ToPayload(20)}};
+  workflow::Context ctx(&env, dc.get());
+  int calls = 0;
+  auto fn = [&] { return ++calls, -1; };  // garbage if ever run during replay
+  EXPECT_EQ(ctx.MutableSideEffect("cfg", fn), 10);  // call 0: replay a recorded change
+  EXPECT_EQ(ctx.MutableSideEffect("cfg", fn), 10);  // call 1: replay unchanged (next change pending)
+  EXPECT_EQ(ctx.MutableSideEffect("cfg", fn), 20);  // call 2: replay the next recorded change
+  EXPECT_EQ(calls, 0);                              // fn never ran while replaying changes
+  EXPECT_TRUE(env.emitted_mutable_side_effects.empty());
+}
+
+TEST(WorkflowRuntime, MutableSideEffectGoesLiveAfterRecordedChangesExhausted) {
+  FakeEnv env;
+  const auto dc = DataConverter::Default();
+  env.recorded_mutable_side_effects["cfg"] = {{0, dc->ToPayload(5)}};
+  workflow::Context ctx(&env, dc.get());
+  int calls = 0;
+  EXPECT_EQ(ctx.MutableSideEffect("cfg", [&] { return ++calls, 5; }), 5);  // call 0: replay change
+  // Past recorded changes: live. A deterministic fn returns the same value, so
+  // no new marker is recorded and the value stays consistent.
+  EXPECT_EQ(ctx.MutableSideEffect("cfg", [&] { return ++calls, 5; }), 5);
+  EXPECT_EQ(calls, 1);                              // fn ran only on the live call
+  EXPECT_TRUE(env.emitted_mutable_side_effects.empty());
 }
 
 TEST(WorkflowRuntime, GetVersionChoosesMaxOnLivePathAndRecords) {

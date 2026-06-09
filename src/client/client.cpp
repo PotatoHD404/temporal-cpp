@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "google/protobuf/util/json_util.h"
+#include "temporal/api/enums/v1/batch_operation.pb.h"
 #include "temporal/api/enums/v1/event_type.pb.h"
 #include "temporal/api/enums/v1/update.pb.h"
 #include "temporal/api/enums/v1/workflow.pb.h"
@@ -496,6 +497,95 @@ void Client::PromoteWorkerBuildIdSet(const std::string& task_queue, const std::s
   req.set_task_queue(task_queue);
   req.set_promote_set_by_build_id(build_id);
   grpc_->UpdateWorkerBuildIdCompatibility(req);
+}
+
+WorkerVersioningRules Client::GetWorkerVersioningRules(const std::string& task_queue) {
+  internal::wsv::GetWorkerVersioningRulesRequest req;
+  req.set_namespace_(ns_);
+  req.set_task_queue(task_queue);
+  const auto resp = grpc_->GetWorkerVersioningRules(req);
+  WorkerVersioningRules out;
+  for (const auto& rule : resp.assignment_rules()) {
+    out.assignment_rule_target_build_ids.push_back(rule.rule().target_build_id());
+  }
+  out.conflict_token = resp.conflict_token();
+  return out;
+}
+
+void Client::InsertWorkerAssignmentRule(const std::string& task_queue,
+                                        const std::string& target_build_id) {
+  internal::wsv::UpdateWorkerVersioningRulesRequest req;
+  req.set_namespace_(ns_);
+  req.set_task_queue(task_queue);
+  // The server enforces optimistic concurrency: every update must echo the
+  // current conflict token, even the first insert, so fetch it first.
+  req.set_conflict_token(GetWorkerVersioningRules(task_queue).conflict_token);
+  auto* insert = req.mutable_insert_assignment_rule();
+  insert->set_rule_index(0);
+  insert->mutable_rule()->set_target_build_id(target_build_id);
+  grpc_->UpdateWorkerVersioningRules(req);
+}
+
+void Client::StartBatchTerminate(const std::string& job_id, const std::string& visibility_query,
+                                 const std::string& reason) {
+  internal::wsv::StartBatchOperationRequest req;
+  req.set_namespace_(ns_);
+  req.set_job_id(job_id);
+  req.set_visibility_query(visibility_query);
+  req.set_reason(reason);
+  req.mutable_termination_operation()->set_identity(identity_);
+  grpc_->StartBatchOperation(req);
+}
+
+void Client::StartBatchCancel(const std::string& job_id, const std::string& visibility_query,
+                              const std::string& reason) {
+  internal::wsv::StartBatchOperationRequest req;
+  req.set_namespace_(ns_);
+  req.set_job_id(job_id);
+  req.set_visibility_query(visibility_query);
+  req.set_reason(reason);
+  req.mutable_cancellation_operation()->set_identity(identity_);
+  grpc_->StartBatchOperation(req);
+}
+
+BatchOperationDescription Client::DescribeBatchOperation(const std::string& job_id) {
+  internal::wsv::DescribeBatchOperationRequest req;
+  req.set_namespace_(ns_);
+  req.set_job_id(job_id);
+  const auto resp = grpc_->DescribeBatchOperation(req);
+  BatchOperationDescription out;
+  out.job_id = resp.job_id();
+  std::string state = enums::BatchOperationState_Name(resp.state());
+  const std::string prefix = "BATCH_OPERATION_STATE_";
+  if (state.starts_with(prefix)) {
+    state = state.substr(prefix.size());
+  }
+  out.state = state;
+  out.total_operations = resp.total_operation_count();
+  out.completed_operations = resp.complete_operation_count();
+  out.failed_operations = resp.failure_operation_count();
+  return out;
+}
+
+std::vector<std::string> Client::ListBatchOperations() {
+  std::vector<std::string> out;
+  std::string page_token;
+  for (;;) {
+    internal::wsv::ListBatchOperationsRequest req;
+    req.set_namespace_(ns_);
+    if (!page_token.empty()) {
+      req.set_next_page_token(page_token);
+    }
+    const auto resp = grpc_->ListBatchOperations(req);
+    for (const auto& info : resp.operation_info()) {
+      out.push_back(info.job_id());
+    }
+    page_token = resp.next_page_token();
+    if (page_token.empty()) {
+      break;
+    }
+  }
+  return out;
 }
 
 void Client::CompleteActivityPayloads(const std::string& task_token, const Payloads& result) {

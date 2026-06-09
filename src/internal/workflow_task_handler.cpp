@@ -71,6 +71,15 @@ struct ChildOutcome {
   std::string failure_message;
 };
 
+// A recorded MutableSideEffect marker, raw payloads (decoded by the runner which
+// holds the converter): the side-effect id, the per-id call index at which the
+// value changed, and the recorded value.
+struct MutableSideEffectMarkerRaw {
+  Payload id;
+  Payload call_index;
+  Payload data;
+};
+
 struct Prescan {
   Payloads input;
   std::map<std::string, Payload> headers;  // from WorkflowExecutionStarted.header
@@ -92,6 +101,7 @@ struct Prescan {
   // (change-id payloads, version payloads), parsed lazily by the runner.
   std::vector<Payload> side_effects;
   std::vector<std::pair<Payloads, Payloads>> version_markers;
+  std::vector<MutableSideEffectMarkerRaw> mutable_side_effect_markers;  // in history order
 };
 
 // Walk the event history once, indexing the inputs/outcomes the runner replays
@@ -266,6 +276,20 @@ Prescan ScanHistory(const hist::History& history) {
             ps.version_markers.emplace_back(FromProtoPayloads(id_it->second),
                                             FromProtoPayloads(ver_it->second));
           }
+        } else if (m.marker_name() == "MutableSideEffect") {
+          const auto id_it = m.details().find("id");
+          const auto idx_it = m.details().find("mse-call-index");
+          const auto data_it = m.details().find("data");
+          if (id_it != m.details().end() && idx_it != m.details().end() &&
+              data_it != m.details().end()) {
+            Payloads idp = FromProtoPayloads(id_it->second);
+            Payloads idxp = FromProtoPayloads(idx_it->second);
+            Payloads datap = FromProtoPayloads(data_it->second);
+            if (!idp.empty() && !idxp.empty() && !datap.empty()) {
+              ps.mutable_side_effect_markers.push_back(
+                  {std::move(idp[0]), std::move(idxp[0]), std::move(datap[0])});
+            }
+          }
         }
         break;
       }
@@ -317,6 +341,17 @@ class WorkflowRunner final : public WorkflowOutbound {
             converter_->FromPayload<int>(ver_payloads[0]);
       } catch (const std::exception&) {
         // Ignore a malformed version marker rather than failing the whole task.
+      }
+    }
+    // Reconstruct per-id MutableSideEffect change history (id -> ordered
+    // (call-index, value)) so replay returns recorded values without running fn.
+    for (const auto& m : scan_.mutable_side_effect_markers) {
+      try {
+        const auto id = converter_->FromPayload<std::string>(m.id);
+        const auto idx = converter_->FromPayload<int>(m.call_index);
+        mse_recorded_[id].emplace_back(idx, m.data);
+      } catch (const std::exception&) {
+        // Ignore a malformed marker rather than failing the whole task.
       }
     }
   }
@@ -570,6 +605,51 @@ class WorkflowRunner final : public WorkflowOutbound {
                                  {"version", Payloads{converter_->ToPayload(version)}}});
     change_versions_[change_id] = version;
     return version;
+  }
+
+  MutableSideEffectStep BeginMutableSideEffect(const std::string& id, Payload& value_out,
+                                               bool& has_current) override {
+    const int idx = static_cast<int>(mse_call_count_[id]++);  // this call's per-id ordinal
+    const auto rit = mse_recorded_.find(id);
+    if (rit != mse_recorded_.end()) {
+      const auto& list = rit->second;
+      const std::size_t cur = mse_cursor_[id];
+      if (cur < list.size() && list[cur].first == idx) {
+        // This call recorded a change in history: reproduce the marker command
+        // (for matching), adopt the recorded value, advance the cursor.
+        produced_commands_.push_back({CommandEvent::Kind::Marker, "MutableSideEffect", ""});
+        mse_current_[id] = list[cur].second;
+        mse_cursor_[id] = cur + 1;
+        value_out = mse_current_[id];
+        return MutableSideEffectStep::ReplayChange;
+      }
+      if (cur < list.size()) {
+        // A future change exists but not at this call: the value is unchanged
+        // here. A change at index 0 is always recorded, so current exists.
+        value_out = mse_current_[id];
+        return MutableSideEffectStep::ReplayUnchanged;
+      }
+    }
+    // Beyond recorded history: live path. Surface the current value (if any) so
+    // the caller can compare and decide whether to record a change.
+    const auto cit = mse_current_.find(id);
+    has_current = cit != mse_current_.end();
+    if (has_current) {
+      value_out = cit->second;
+    }
+    return MutableSideEffectStep::Live;
+  }
+
+  void RecordMutableSideEffect(const std::string& id, bool changed, const Payload& value) override {
+    if (!changed) {
+      return;  // unchanged live call: no marker recorded, current value stays.
+    }
+    const int idx = static_cast<int>(mse_call_count_[id]) - 1;  // ordinal of this (changed) call
+    produced_commands_.push_back({CommandEvent::Kind::Marker, "MutableSideEffect", ""});
+    mse_current_[id] = value;
+    EmitRecordMarker("MutableSideEffect", {{"id", Payloads{converter_->ToPayload(id)}},
+                                           {"mse-call-index", Payloads{converter_->ToPayload(idx)}},
+                                           {"data", Payloads{value}}});
   }
 
   void Block(const std::shared_ptr<FutureState>& state) override {
@@ -954,6 +1034,12 @@ class WorkflowRunner final : public WorkflowOutbound {
   std::size_t ext_signal_seq_ = 0;
   std::size_t upsert_seq_ = 0;
   std::unordered_map<std::string, int> change_versions_;
+  // MutableSideEffect bookkeeping, keyed by id.
+  std::unordered_map<std::string, std::vector<std::pair<int, Payload>>>
+      mse_recorded_;                                            // recorded (call-index, value), in order
+  std::unordered_map<std::string, std::size_t> mse_call_count_;  // calls seen so far
+  std::unordered_map<std::string, std::size_t> mse_cursor_;      // next recorded change to apply
+  std::unordered_map<std::string, Payload> mse_current_;         // current value
   std::unique_ptr<Coroutine> coroutine_;  // declared last -> destroyed first (tears down thread)
 };
 

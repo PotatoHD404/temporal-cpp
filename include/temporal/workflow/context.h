@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -168,6 +169,41 @@ class Context {
   // `min_supported` to keep supporting the un-versioned (pre-call) branch.
   int GetVersion(const std::string& change_id, int min_supported, int max_supported) {
     return env_->GetVersion(change_id, min_supported, max_supported);
+  }
+
+  // Like SideEffect, but keyed by `id` and only records a new marker when the
+  // value changes (compared with `equals`). On replay the recorded value is
+  // returned without running `fn`. Mirrors the Go SDK's
+  // `workflow.MutableSideEffect`: use it to capture a value that usually stays
+  // the same across many calls without writing a marker every time.
+  template <class Fn, class Equals>
+  auto MutableSideEffect(const std::string& id, Fn fn, Equals equals) -> std::invoke_result_t<Fn> {
+    using R = std::invoke_result_t<Fn>;
+    static_assert(!std::is_void_v<R>, "MutableSideEffect's function must return a value");
+    Payload value_out;
+    bool has_current = false;
+    const auto step = env_->BeginMutableSideEffect(id, value_out, has_current);
+    if (step != internal::MutableSideEffectStep::Live) {
+      return converter_->FromPayload<R>(value_out);  // replayed change or current value
+    }
+    R value = fn();
+    if (has_current) {
+      R current = converter_->FromPayload<R>(value_out);
+      if (equals(current, value)) {
+        env_->RecordMutableSideEffect(id, /*changed=*/false, Payload{});
+        return current;
+      }
+    }
+    Payload encoded = converter_->ToPayload(value);
+    env_->RecordMutableSideEffect(id, /*changed=*/true, encoded);
+    return value;
+  }
+
+  // MutableSideEffect using operator== to compare values.
+  template <class Fn>
+  auto MutableSideEffect(const std::string& id, Fn fn) -> std::invoke_result_t<Fn> {
+    using R = std::invoke_result_t<Fn>;
+    return MutableSideEffect(id, std::move(fn), std::equal_to<R>{});
   }
 
   const WorkflowInfo& GetInfo() const { return env_->Info(); }

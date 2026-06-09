@@ -1416,4 +1416,110 @@ TEST_F(IntegrationTest, MetricsHandlerReceivesTimersGaugesAndPollCounters) {
   worker.Stop();
 }
 
+// ===========================================================================
+// Wave-2 parity additions: MutableSideEffect (engine), batch operations,
+// worker versioning rules.
+// ===========================================================================
+
+// Uses MutableSideEffect across timers (multiple tasks). The "config" changes at
+// i==1 then stays the same, so only the first two calls record a marker; the
+// recorded history must then replay deterministically.
+std::string MutableSideEffectWorkflow(temporal::workflow::Context& ctx, int n) {
+  int sum = 0;
+  for (int i = 0; i < n; ++i) {
+    const int v = ctx.MutableSideEffect("cfg", [&] { return i == 0 ? 1 : 2; });
+    sum += v;
+    ctx.Sleep(50ms);  // task boundary -> exercises sticky/replay between calls
+  }
+  return std::to_string(sum);
+}
+
+// POSITIVE: MutableSideEffect records only on change, and the recorded history
+// replays deterministically (real marker record/replay engine path).
+TEST_F(IntegrationTest, MutableSideEffectRecordsChangesAndReplays) {
+  const auto tq = UniqueTaskQueue("mse");
+  std::string history_json;
+  {
+    temporal::worker::Worker worker(*client_, tq);
+    worker.RegisterWorkflow("MseWorkflow", MutableSideEffectWorkflow);
+    worker.Start();
+    temporal::StartWorkflowOptions o;
+    o.task_queue = tq;
+    auto handle = client_->StartWorkflow(o, "MseWorkflow", 3);
+    EXPECT_EQ(handle.Result<std::string>(), "5");  // 1 + 2 + 2
+    history_json = handle.FetchHistoryJson();
+    worker.Stop();
+  }
+  ASSERT_FALSE(history_json.empty());
+  temporal::worker::Worker replayer(*client_, tq);
+  replayer.RegisterWorkflow("MseWorkflow", MutableSideEffectWorkflow);
+  EXPECT_NO_THROW(replayer.ReplayWorkflowHistory(history_json));  // deterministic
+}
+
+// POSITIVE: batch-terminate two running workflows matched by a visibility query.
+TEST_F(IntegrationTest, BatchTerminateByQuery) {
+  std::system("temporal operator search-attribute create --name ItestKeyword --type Keyword "
+              ">/dev/null 2>&1");
+  std::this_thread::sleep_for(1s);
+  const auto tq = UniqueTaskQueue("batch");
+  const std::string marker = "batch-" + std::to_string(std::random_device{}());
+  temporal::worker::Worker worker(*client_, tq);
+  worker.RegisterWorkflow("LongSleepWorkflow", LongSleepWorkflow);
+  worker.Start();
+  std::vector<temporal::client::WorkflowHandle> handles;
+  for (int i = 0; i < 2; ++i) {
+    temporal::StartWorkflowOptions o;
+    o.task_queue = tq;
+    o.search_attributes["ItestKeyword"] = temporal::sa::Keyword(marker);
+    handles.push_back(client_->StartWorkflow(o, "LongSleepWorkflow", 0));
+  }
+  const std::string query = "ItestKeyword = '" + marker + "'";
+  for (int i = 0; i < 40; ++i) {  // visibility is eventually consistent
+    if (client_->ListWorkflows(query).size() >= 2) {
+      break;
+    }
+    std::this_thread::sleep_for(250ms);
+  }
+  const std::string job_id = "job-" + std::to_string(std::random_device{}());
+  client_->StartBatchTerminate(job_id, query, "integration batch test");
+
+  temporal::client::BatchOperationDescription desc;
+  for (int i = 0; i < 60; ++i) {
+    desc = client_->DescribeBatchOperation(job_id);
+    // State names are the prefix-stripped proto enums, i.e. UPPERCASE.
+    if (desc.state == "COMPLETED" || desc.state == "FAILED") {
+      break;
+    }
+    std::this_thread::sleep_for(500ms);
+  }
+  EXPECT_EQ(desc.state, "COMPLETED");
+  for (auto& h : handles) {
+    EXPECT_EQ(h.Describe().status, "TERMINATED");
+  }
+  worker.Stop();
+}
+
+// NEGATIVE: describing an unknown batch job fails.
+TEST_F(IntegrationTest, DescribeUnknownBatchOperationThrows) {
+  const std::string job = "no-such-job-" + std::to_string(std::random_device{}());
+  EXPECT_THROW(client_->DescribeBatchOperation(job), temporal::RpcError);
+}
+
+// POSITIVE: insert a worker assignment rule and read it back (rules-based
+// versioning). Requires the dev server with frontend.workerVersioningRuleAPIs=true.
+TEST_F(IntegrationTest, InsertAndReadWorkerAssignmentRule) {
+  const auto tq = UniqueTaskQueue("vrules");
+  const std::string build_id = "build-" + std::to_string(std::random_device{}());
+  client_->InsertWorkerAssignmentRule(tq, build_id);
+  const auto rules = client_->GetWorkerVersioningRules(tq);
+  bool found = false;
+  for (const auto& b : rules.assignment_rule_target_build_ids) {
+    if (b == build_id) {
+      found = true;
+    }
+  }
+  EXPECT_TRUE(found);
+  EXPECT_FALSE(rules.conflict_token.empty());
+}
+
 }  // namespace
