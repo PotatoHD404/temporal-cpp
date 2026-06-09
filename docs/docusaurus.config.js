@@ -40,7 +40,7 @@ const config = {
         docs: {
           sidebarPath: require.resolve('./sidebars.js'),
           routeBasePath: '/', // serve docs at the site root
-          editUrl: `https://github.com/${ghUser}/${repo}/tree/main/website/`,
+          editUrl: `https://github.com/${ghUser}/${repo}/tree/main/docs/`,
         },
         blog: false,
         theme: {customCss: require.resolve('./src/css/custom.css')},

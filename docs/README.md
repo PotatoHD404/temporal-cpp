@@ -5,7 +5,7 @@ A [Docusaurus](https://docusaurus.io) site for the temporal-cpp-sdk docs, deploy
 ## Local development
 
 ```bash
-cd website
+cd docs
 npm install
 npm start          # dev server at http://localhost:3000
 ```

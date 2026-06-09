@@ -5,13 +5,38 @@ port modeled on the official [Go SDK](https://github.com/temporalio/sdk-go), tal
 to the Temporal frontend over gRPC with its own workflow replay engine. No Rust `sdk-core`
 dependency.
 
+📖 **Documentation (EN + RU): https://potatohd404.github.io/temporal-cpp-sdk/**
+
 > ⚠️ **Status: experimental.** This is not an official Temporal SDK and is not affiliated with
 > Temporal Technologies. It implements a substantial, fully-tested **core** of the Temporal
-> programming model — workflows, activities (incl. local + async completion), timers, signals /
-> queries / updates, child workflows, selectors, continue-as-new, `SideEffect` / `GetVersion`,
-> Nexus operations, schedules, and a time-skipping test environment — but it is **not at parity**
-> with the official SDKs. See [docs/ROADMAP.md](docs/ROADMAP.md) for what is and isn't supported
-> yet.
+> programming model — but it is **not at parity** with the official SDKs (the full surface is
+> years of work). The honest, itemized capability matrix is on the
+> [parity page](https://potatohd404.github.io/temporal-cpp-sdk/parity).
+
+## What it can do
+
+Workflows & activities, with a deterministic replay engine:
+
+- **Workflows** — typed orchestration on a stackful-coroutine engine with a sticky cache;
+  timers, child workflows (incl. parent-close policy), continue-as-new, selectors,
+  `SideEffect` / `MutableSideEffect` / `GetVersion`, search attributes / memo, cancellation
+  scopes, and a C++20 `co_await` authoring mode.
+- **Activities** — typed execution, server-driven retries, heartbeating (auto-throttled),
+  local activities, and async / manual completion.
+- **Message passing** — signals, queries, updates (with validators), and typed
+  `SignalRef` / `QueryRef` / `UpdateRef` handles.
+- **Nexus** — endpoint management + operation calls (`ExecuteNexusOperation`) + a worker
+  Nexus handler (`RegisterNexusOperation`).
+- **Client & worker** — start / signal / query / update / cancel / terminate, schedules
+  (interval + cron), batch operations, visibility queries, worker versioning, sessions,
+  TLS / mTLS / API-key auth, interceptors, metrics & tracing, poller autoscaling, and a
+  graceful drain.
+- **Testing** — an offline history replayer (`Worker::ReplayWorkflowHistory`) and a
+  time-skipping `testing::TestWorkflowEnvironment` (against the Temporal test server).
+
+See the [docs site](https://potatohd404.github.io/temporal-cpp-sdk/) for guides and the
+[parity matrix](https://potatohd404.github.io/temporal-cpp-sdk/parity) for the precise,
+honest accounting of what is and isn't there yet.
 
 ## Why native (and how it relates to the other SDKs)
 
@@ -24,8 +49,9 @@ Temporal's SDKs come in two flavors:
   runtime + data converter + public API.
 
 This project takes the **native** route, mirroring the Go SDK's structure and developer
-experience in idiomatic C++. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design
-and the determinism model.
+experience in idiomatic C++. See the
+[Architecture page](https://potatohd404.github.io/temporal-cpp-sdk/architecture) for the
+design and the determinism model.
 
 ## Public API at a glance
 
@@ -66,6 +92,10 @@ int main() {
 }
 ```
 
+New to Temporal? Start with the
+[Getting started](https://potatohd404.github.io/temporal-cpp-sdk/getting-started) guide and
+the [tutorial](https://potatohd404.github.io/temporal-cpp-sdk/tutorial).
+
 ## Requirements
 
 - C++20 compiler (Apple Clang 21 / recent Clang or GCC)
@@ -93,9 +123,7 @@ ctest --test-dir build -LE integration   # unit tests (no server needed)
 
 ### Integration tests
 
-End-to-end tests (timers, activity-failure propagation, parallel activities, retry policy,
-terminate, signals, cancellation, queries, and selectors) run against a real server and are gated
-so the default run needs none:
+End-to-end tests run against a real server and are gated so the default run needs none:
 
 ```bash
 temporal server start-dev &                                   # dev server on :7233
@@ -103,7 +131,12 @@ TEMPORAL_INTEGRATION=1 ctest --test-dir build -L integration  # run them
 ```
 
 Without `TEMPORAL_INTEGRATION=1` they self-skip. CI (`.github/workflows/ci.yml`) runs both
-suites on macOS, standing up a dev server for the integration pass.
+suites, standing up a dev server for the integration pass.
+
+The time-skipping test (`TimeSkippingFastForwardsTimers`) additionally needs the separate
+[Temporal test server](https://github.com/temporalio/sdk-java/releases) binary and is gated on
+`TEMPORAL_TEST_SERVER=host:port` (e.g. start `temporal-test-server 7244`, then export
+`TEMPORAL_TEST_SERVER=localhost:7244`); it self-skips otherwise.
 
 ## Run the example end-to-end
 
@@ -116,6 +149,21 @@ temporal server start-dev                 # terminal 1: a local dev server on :7
 
 You can inspect the run with `temporal workflow list` or the Web UI at http://localhost:8233.
 
+## Documentation
+
+The full documentation (English + Russian) is published at
+**https://potatohd404.github.io/temporal-cpp-sdk/** and its source lives in
+[`docs/`](docs/) (a [Docusaurus](https://docusaurus.io) site). Highlights:
+
+- [Getting started](https://potatohd404.github.io/temporal-cpp-sdk/getting-started) ·
+  [Tutorial](https://potatohd404.github.io/temporal-cpp-sdk/tutorial) ·
+  [Core concepts](https://potatohd404.github.io/temporal-cpp-sdk/concepts)
+- [Writing workflows](https://potatohd404.github.io/temporal-cpp-sdk/workflows/overview) ·
+  [Client & worker](https://potatohd404.github.io/temporal-cpp-sdk/client-and-worker) ·
+  [Testing](https://potatohd404.github.io/temporal-cpp-sdk/testing)
+- [Architecture](https://potatohd404.github.io/temporal-cpp-sdk/architecture) ·
+  [Parity matrix](https://potatohd404.github.io/temporal-cpp-sdk/parity)
+
 ## Project layout
 
 ```
@@ -123,9 +171,9 @@ include/temporal/   Public headers (client/ worker/ workflow/ activity/ converte
 src/                Implementation; src/internal/ is the native engine (not installed)
 cmake/              Protobuf/gRPC code generation
 examples/           Runnable examples
-tests/              GoogleTest unit tests
+tests/              GoogleTest unit + integration tests
 third_party/        Vendored protos + reference SDKs (submodules)
-docs/               Architecture and roadmap
+docs/               Documentation site (Docusaurus, EN + RU) — deployed to GitHub Pages
 ```
 
 ## References
@@ -134,6 +182,7 @@ docs/               Architecture and roadmap
 - [Temporal Python SDK](https://github.com/temporalio/sdk-python) — a core-based SDK, used to
   understand the lang/engine boundary
 - [temporalio/api](https://github.com/temporalio/api) — the protobuf API definitions
+- [Temporal documentation](https://docs.temporal.io) — concepts that apply to every SDK
 
 ## License
 
