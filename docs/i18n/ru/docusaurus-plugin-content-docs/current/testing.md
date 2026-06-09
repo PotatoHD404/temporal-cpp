@@ -103,7 +103,7 @@ TEMPORAL_TEST_SERVER=localhost:7244 TEMPORAL_INTEGRATION=1 \
   ctest --test-dir build -L integration -R TimeSkipping
 ```
 
-## Реплей записанных историй
+## Реплей записанных историй {#replaying-recorded-histories}
 
 `Worker::ReplayWorkflowHistory(history_json)` воспроизводит записанную историю воркфлоу против
 зарегистрированного на воркере кода воркфлоу и обнаруживает недетерминизм — полностью **офлайн, без
