@@ -284,20 +284,17 @@ class Interceptor {
   // allocate and hand ownership to the caller (see MakeChain below for the
   // common pattern). Returning `next` unchanged means "do not intercept".
   virtual std::unique_ptr<WorkflowInboundInterceptor> InterceptWorkflow(
-      WorkflowInboundInterceptor* next) {
-    (void)next;
+      [[maybe_unused]] WorkflowInboundInterceptor* next) {
     return nullptr;  // nullptr => no wrapper; chain builder keeps `next`.
   }
   virtual std::unique_ptr<ActivityInboundInterceptor> InterceptActivity(
-      ActivityInboundInterceptor* next) {
-    (void)next;
+      [[maybe_unused]] ActivityInboundInterceptor* next) {
     return nullptr;
   }
 
   // Client side.
   virtual std::unique_ptr<ClientOutboundInterceptor> InterceptClient(
-      ClientOutboundInterceptor* next) {
-    (void)next;
+      [[maybe_unused]] ClientOutboundInterceptor* next) {
     return nullptr;
   }
 };

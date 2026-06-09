@@ -21,6 +21,9 @@ constexpr int kPollSeconds = 5;
 GrpcClient::GrpcClient(const std::string& target, std::string ns, std::string identity,
                        const TlsConfig& tls, std::string api_key)
     : ns_(std::move(ns)), identity_(std::move(identity)), api_key_(std::move(api_key)) {
+  if (!api_key_.empty()) {
+    auth_header_ = "Bearer " + api_key_;  // built once; reused on every RPC
+  }
   std::shared_ptr<grpc::ChannelCredentials> creds;
   if (tls.enabled) {
     grpc::SslCredentialsOptions ssl;
@@ -47,8 +50,8 @@ Resp GrpcClient::UnaryCall(const char* name, bool poll, Invoke&& invoke) const {
   if (poll) {
     ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(kPollSeconds));
   }
-  if (!api_key_.empty()) {
-    ctx.AddMetadata("authorization", "Bearer " + api_key_);
+  if (!auth_header_.empty()) {
+    ctx.AddMetadata("authorization", auth_header_);
     ctx.AddMetadata("temporal-namespace", ns_);
   }
   Resp resp;
@@ -63,422 +66,77 @@ Resp GrpcClient::UnaryCall(const char* name, bool poll, Invoke&& invoke) const {
   return resp;
 }
 
-wsv::StartWorkflowExecutionResponse GrpcClient::StartWorkflowExecution(
-    const wsv::StartWorkflowExecutionRequest& req) {
-  return UnaryCall<wsv::StartWorkflowExecutionResponse>(
-      "StartWorkflowExecution", false,
-      [&](grpc::ClientContext* c, wsv::StartWorkflowExecutionResponse* p) {
-        return stub_->StartWorkflowExecution(c, req, p);
-      });
-}
+// Every RPC wrapper is the same thin shape — forward `req` to the stub method of
+// the matching name and route the response through UnaryCall. These macros expand
+// to exactly that (one per service), so the request/response types and method
+// name are written once. `Poll` is true only for the long-poll RPCs. The header
+// still declares each method with its concrete signature.
+#define TEMPORAL_WS_CALL(Method, Poll)                                                       \
+  wsv::Method##Response GrpcClient::Method(const wsv::Method##Request& req) {                 \
+    return UnaryCall<wsv::Method##Response>(#Method, (Poll),                                  \
+        [&](grpc::ClientContext* c, wsv::Method##Response* p) { return stub_->Method(c, req, p); }); \
+  }
+#define TEMPORAL_OP_CALL(Method)                                                              \
+  osv::Method##Response GrpcClient::Method(const osv::Method##Request& req) {                 \
+    return UnaryCall<osv::Method##Response>(#Method, false, [&](grpc::ClientContext* c,       \
+                                                                osv::Method##Response* p) {   \
+      return operator_stub_->Method(c, req, p);                                               \
+    });                                                                                       \
+  }
 
-wsv::DescribeWorkflowExecutionResponse GrpcClient::DescribeWorkflowExecution(
-    const wsv::DescribeWorkflowExecutionRequest& req) {
-  return UnaryCall<wsv::DescribeWorkflowExecutionResponse>(
-      "DescribeWorkflowExecution", false,
-      [&](grpc::ClientContext* c, wsv::DescribeWorkflowExecutionResponse* p) {
-        return stub_->DescribeWorkflowExecution(c, req, p);
-      });
-}
+// WorkflowService (the three long polls pass Poll=true; everything else is unary).
+TEMPORAL_WS_CALL(StartWorkflowExecution, false)
+TEMPORAL_WS_CALL(DescribeWorkflowExecution, false)
+TEMPORAL_WS_CALL(ListWorkflowExecutions, false)
+TEMPORAL_WS_CALL(CountWorkflowExecutions, false)
+TEMPORAL_WS_CALL(SignalWithStartWorkflowExecution, false)
+TEMPORAL_WS_CALL(CreateSchedule, false)
+TEMPORAL_WS_CALL(DescribeSchedule, false)
+TEMPORAL_WS_CALL(DeleteSchedule, false)
+TEMPORAL_WS_CALL(UpdateSchedule, false)
+TEMPORAL_WS_CALL(PatchSchedule, false)
+TEMPORAL_WS_CALL(ListSchedules, false)
+TEMPORAL_WS_CALL(GetWorkflowExecutionHistory, true)
+TEMPORAL_WS_CALL(PollWorkflowTaskQueue, true)
+TEMPORAL_WS_CALL(RespondWorkflowTaskCompleted, false)
+TEMPORAL_WS_CALL(RespondWorkflowTaskFailed, false)
+TEMPORAL_WS_CALL(PollActivityTaskQueue, true)
+TEMPORAL_WS_CALL(RespondActivityTaskCompleted, false)
+TEMPORAL_WS_CALL(RespondActivityTaskFailed, false)
+TEMPORAL_WS_CALL(RecordActivityTaskHeartbeat, false)
+TEMPORAL_WS_CALL(SignalWorkflowExecution, false)
+TEMPORAL_WS_CALL(RequestCancelWorkflowExecution, false)
+TEMPORAL_WS_CALL(TerminateWorkflowExecution, false)
+TEMPORAL_WS_CALL(QueryWorkflow, false)
+TEMPORAL_WS_CALL(RespondQueryTaskCompleted, false)
+TEMPORAL_WS_CALL(UpdateWorkflowExecution, false)
+TEMPORAL_WS_CALL(ResetWorkflowExecution, false)
+TEMPORAL_WS_CALL(GetWorkerBuildIdCompatibility, false)
+TEMPORAL_WS_CALL(UpdateWorkerBuildIdCompatibility, false)
+TEMPORAL_WS_CALL(GetWorkerVersioningRules, false)
+TEMPORAL_WS_CALL(UpdateWorkerVersioningRules, false)
+TEMPORAL_WS_CALL(StartBatchOperation, false)
+TEMPORAL_WS_CALL(StopBatchOperation, false)
+TEMPORAL_WS_CALL(DescribeBatchOperation, false)
+TEMPORAL_WS_CALL(ListBatchOperations, false)
+TEMPORAL_WS_CALL(GetClusterInfo, false)
+TEMPORAL_WS_CALL(ListWorkerDeployments, false)
+TEMPORAL_WS_CALL(DescribeWorkerDeployment, false)
+TEMPORAL_WS_CALL(SetWorkerDeploymentCurrentVersion, false)
 
-wsv::ListWorkflowExecutionsResponse GrpcClient::ListWorkflowExecutions(
-    const wsv::ListWorkflowExecutionsRequest& req) {
-  return UnaryCall<wsv::ListWorkflowExecutionsResponse>(
-      "ListWorkflowExecutions", false,
-      [&](grpc::ClientContext* c, wsv::ListWorkflowExecutionsResponse* p) {
-        return stub_->ListWorkflowExecutions(c, req, p);
-      });
-}
+// OperatorService.
+TEMPORAL_OP_CALL(AddSearchAttributes)
+TEMPORAL_OP_CALL(ListSearchAttributes)
+TEMPORAL_OP_CALL(RemoveSearchAttributes)
+TEMPORAL_OP_CALL(ListClusters)
+TEMPORAL_OP_CALL(CreateNexusEndpoint)
+TEMPORAL_OP_CALL(GetNexusEndpoint)
+TEMPORAL_OP_CALL(ListNexusEndpoints)
+TEMPORAL_OP_CALL(AddOrUpdateRemoteCluster)
+TEMPORAL_OP_CALL(RemoveRemoteCluster)
+TEMPORAL_OP_CALL(DeleteNamespace)
 
-wsv::CountWorkflowExecutionsResponse GrpcClient::CountWorkflowExecutions(
-    const wsv::CountWorkflowExecutionsRequest& req) {
-  return UnaryCall<wsv::CountWorkflowExecutionsResponse>(
-      "CountWorkflowExecutions", false,
-      [&](grpc::ClientContext* c, wsv::CountWorkflowExecutionsResponse* p) {
-        return stub_->CountWorkflowExecutions(c, req, p);
-      });
-}
-
-wsv::SignalWithStartWorkflowExecutionResponse GrpcClient::SignalWithStartWorkflowExecution(
-    const wsv::SignalWithStartWorkflowExecutionRequest& req) {
-  return UnaryCall<wsv::SignalWithStartWorkflowExecutionResponse>(
-      "SignalWithStartWorkflowExecution", false,
-      [&](grpc::ClientContext* c, wsv::SignalWithStartWorkflowExecutionResponse* p) {
-        return stub_->SignalWithStartWorkflowExecution(c, req, p);
-      });
-}
-
-wsv::CreateScheduleResponse GrpcClient::CreateSchedule(const wsv::CreateScheduleRequest& req) {
-  return UnaryCall<wsv::CreateScheduleResponse>(
-      "CreateSchedule", false,
-      [&](grpc::ClientContext* c, wsv::CreateScheduleResponse* p) {
-        return stub_->CreateSchedule(c, req, p);
-      });
-}
-
-wsv::DescribeScheduleResponse GrpcClient::DescribeSchedule(const wsv::DescribeScheduleRequest& req) {
-  return UnaryCall<wsv::DescribeScheduleResponse>(
-      "DescribeSchedule", false,
-      [&](grpc::ClientContext* c, wsv::DescribeScheduleResponse* p) {
-        return stub_->DescribeSchedule(c, req, p);
-      });
-}
-
-wsv::DeleteScheduleResponse GrpcClient::DeleteSchedule(const wsv::DeleteScheduleRequest& req) {
-  return UnaryCall<wsv::DeleteScheduleResponse>(
-      "DeleteSchedule", false,
-      [&](grpc::ClientContext* c, wsv::DeleteScheduleResponse* p) {
-        return stub_->DeleteSchedule(c, req, p);
-      });
-}
-
-wsv::UpdateScheduleResponse GrpcClient::UpdateSchedule(const wsv::UpdateScheduleRequest& req) {
-  return UnaryCall<wsv::UpdateScheduleResponse>(
-      "UpdateSchedule", false, [&](grpc::ClientContext* c, wsv::UpdateScheduleResponse* p) {
-        return stub_->UpdateSchedule(c, req, p);
-      });
-}
-
-wsv::PatchScheduleResponse GrpcClient::PatchSchedule(const wsv::PatchScheduleRequest& req) {
-  return UnaryCall<wsv::PatchScheduleResponse>(
-      "PatchSchedule", false, [&](grpc::ClientContext* c, wsv::PatchScheduleResponse* p) {
-        return stub_->PatchSchedule(c, req, p);
-      });
-}
-
-wsv::ListSchedulesResponse GrpcClient::ListSchedules(const wsv::ListSchedulesRequest& req) {
-  return UnaryCall<wsv::ListSchedulesResponse>(
-      "ListSchedules", false, [&](grpc::ClientContext* c, wsv::ListSchedulesResponse* p) {
-        return stub_->ListSchedules(c, req, p);
-      });
-}
-
-wsv::GetWorkflowExecutionHistoryResponse GrpcClient::GetWorkflowExecutionHistory(
-    const wsv::GetWorkflowExecutionHistoryRequest& req) {
-  return UnaryCall<wsv::GetWorkflowExecutionHistoryResponse>(
-      "GetWorkflowExecutionHistory", true,
-      [&](grpc::ClientContext* c, wsv::GetWorkflowExecutionHistoryResponse* p) {
-        return stub_->GetWorkflowExecutionHistory(c, req, p);
-      });
-}
-
-wsv::PollWorkflowTaskQueueResponse GrpcClient::PollWorkflowTaskQueue(
-    const wsv::PollWorkflowTaskQueueRequest& req) {
-  return UnaryCall<wsv::PollWorkflowTaskQueueResponse>(
-      "PollWorkflowTaskQueue", true,
-      [&](grpc::ClientContext* c, wsv::PollWorkflowTaskQueueResponse* p) {
-        return stub_->PollWorkflowTaskQueue(c, req, p);
-      });
-}
-
-wsv::RespondWorkflowTaskCompletedResponse GrpcClient::RespondWorkflowTaskCompleted(
-    const wsv::RespondWorkflowTaskCompletedRequest& req) {
-  return UnaryCall<wsv::RespondWorkflowTaskCompletedResponse>(
-      "RespondWorkflowTaskCompleted", false,
-      [&](grpc::ClientContext* c, wsv::RespondWorkflowTaskCompletedResponse* p) {
-        return stub_->RespondWorkflowTaskCompleted(c, req, p);
-      });
-}
-
-wsv::RespondWorkflowTaskFailedResponse GrpcClient::RespondWorkflowTaskFailed(
-    const wsv::RespondWorkflowTaskFailedRequest& req) {
-  return UnaryCall<wsv::RespondWorkflowTaskFailedResponse>(
-      "RespondWorkflowTaskFailed", false,
-      [&](grpc::ClientContext* c, wsv::RespondWorkflowTaskFailedResponse* p) {
-        return stub_->RespondWorkflowTaskFailed(c, req, p);
-      });
-}
-
-wsv::PollActivityTaskQueueResponse GrpcClient::PollActivityTaskQueue(
-    const wsv::PollActivityTaskQueueRequest& req) {
-  return UnaryCall<wsv::PollActivityTaskQueueResponse>(
-      "PollActivityTaskQueue", true,
-      [&](grpc::ClientContext* c, wsv::PollActivityTaskQueueResponse* p) {
-        return stub_->PollActivityTaskQueue(c, req, p);
-      });
-}
-
-wsv::RespondActivityTaskCompletedResponse GrpcClient::RespondActivityTaskCompleted(
-    const wsv::RespondActivityTaskCompletedRequest& req) {
-  return UnaryCall<wsv::RespondActivityTaskCompletedResponse>(
-      "RespondActivityTaskCompleted", false,
-      [&](grpc::ClientContext* c, wsv::RespondActivityTaskCompletedResponse* p) {
-        return stub_->RespondActivityTaskCompleted(c, req, p);
-      });
-}
-
-wsv::RespondActivityTaskFailedResponse GrpcClient::RespondActivityTaskFailed(
-    const wsv::RespondActivityTaskFailedRequest& req) {
-  return UnaryCall<wsv::RespondActivityTaskFailedResponse>(
-      "RespondActivityTaskFailed", false,
-      [&](grpc::ClientContext* c, wsv::RespondActivityTaskFailedResponse* p) {
-        return stub_->RespondActivityTaskFailed(c, req, p);
-      });
-}
-
-wsv::RecordActivityTaskHeartbeatResponse GrpcClient::RecordActivityTaskHeartbeat(
-    const wsv::RecordActivityTaskHeartbeatRequest& req) {
-  return UnaryCall<wsv::RecordActivityTaskHeartbeatResponse>(
-      "RecordActivityTaskHeartbeat", false,
-      [&](grpc::ClientContext* c, wsv::RecordActivityTaskHeartbeatResponse* p) {
-        return stub_->RecordActivityTaskHeartbeat(c, req, p);
-      });
-}
-
-wsv::SignalWorkflowExecutionResponse GrpcClient::SignalWorkflowExecution(
-    const wsv::SignalWorkflowExecutionRequest& req) {
-  return UnaryCall<wsv::SignalWorkflowExecutionResponse>(
-      "SignalWorkflowExecution", false,
-      [&](grpc::ClientContext* c, wsv::SignalWorkflowExecutionResponse* p) {
-        return stub_->SignalWorkflowExecution(c, req, p);
-      });
-}
-
-wsv::RequestCancelWorkflowExecutionResponse GrpcClient::RequestCancelWorkflowExecution(
-    const wsv::RequestCancelWorkflowExecutionRequest& req) {
-  return UnaryCall<wsv::RequestCancelWorkflowExecutionResponse>(
-      "RequestCancelWorkflowExecution", false,
-      [&](grpc::ClientContext* c, wsv::RequestCancelWorkflowExecutionResponse* p) {
-        return stub_->RequestCancelWorkflowExecution(c, req, p);
-      });
-}
-
-wsv::TerminateWorkflowExecutionResponse GrpcClient::TerminateWorkflowExecution(
-    const wsv::TerminateWorkflowExecutionRequest& req) {
-  return UnaryCall<wsv::TerminateWorkflowExecutionResponse>(
-      "TerminateWorkflowExecution", false,
-      [&](grpc::ClientContext* c, wsv::TerminateWorkflowExecutionResponse* p) {
-        return stub_->TerminateWorkflowExecution(c, req, p);
-      });
-}
-
-wsv::QueryWorkflowResponse GrpcClient::QueryWorkflow(const wsv::QueryWorkflowRequest& req) {
-  return UnaryCall<wsv::QueryWorkflowResponse>(
-      "QueryWorkflow", false, [&](grpc::ClientContext* c, wsv::QueryWorkflowResponse* p) {
-        return stub_->QueryWorkflow(c, req, p);
-      });
-}
-
-wsv::RespondQueryTaskCompletedResponse GrpcClient::RespondQueryTaskCompleted(
-    const wsv::RespondQueryTaskCompletedRequest& req) {
-  return UnaryCall<wsv::RespondQueryTaskCompletedResponse>(
-      "RespondQueryTaskCompleted", false,
-      [&](grpc::ClientContext* c, wsv::RespondQueryTaskCompletedResponse* p) {
-        return stub_->RespondQueryTaskCompleted(c, req, p);
-      });
-}
-
-wsv::UpdateWorkflowExecutionResponse GrpcClient::UpdateWorkflowExecution(
-    const wsv::UpdateWorkflowExecutionRequest& req) {
-  // Blocks until the update reaches the requested lifecycle stage.
-  return UnaryCall<wsv::UpdateWorkflowExecutionResponse>(
-      "UpdateWorkflowExecution", false,
-      [&](grpc::ClientContext* c, wsv::UpdateWorkflowExecutionResponse* p) {
-        return stub_->UpdateWorkflowExecution(c, req, p);
-      });
-}
-
-wsv::ResetWorkflowExecutionResponse GrpcClient::ResetWorkflowExecution(
-    const wsv::ResetWorkflowExecutionRequest& req) {
-  return UnaryCall<wsv::ResetWorkflowExecutionResponse>(
-      "ResetWorkflowExecution", false,
-      [&](grpc::ClientContext* c, wsv::ResetWorkflowExecutionResponse* p) {
-        return stub_->ResetWorkflowExecution(c, req, p);
-      });
-}
-
-wsv::GetWorkerBuildIdCompatibilityResponse GrpcClient::GetWorkerBuildIdCompatibility(
-    const wsv::GetWorkerBuildIdCompatibilityRequest& req) {
-  return UnaryCall<wsv::GetWorkerBuildIdCompatibilityResponse>(
-      "GetWorkerBuildIdCompatibility", false,
-      [&](grpc::ClientContext* c, wsv::GetWorkerBuildIdCompatibilityResponse* p) {
-        return stub_->GetWorkerBuildIdCompatibility(c, req, p);
-      });
-}
-
-wsv::UpdateWorkerBuildIdCompatibilityResponse GrpcClient::UpdateWorkerBuildIdCompatibility(
-    const wsv::UpdateWorkerBuildIdCompatibilityRequest& req) {
-  return UnaryCall<wsv::UpdateWorkerBuildIdCompatibilityResponse>(
-      "UpdateWorkerBuildIdCompatibility", false,
-      [&](grpc::ClientContext* c, wsv::UpdateWorkerBuildIdCompatibilityResponse* p) {
-        return stub_->UpdateWorkerBuildIdCompatibility(c, req, p);
-      });
-}
-
-wsv::GetWorkerVersioningRulesResponse GrpcClient::GetWorkerVersioningRules(
-    const wsv::GetWorkerVersioningRulesRequest& req) {
-  return UnaryCall<wsv::GetWorkerVersioningRulesResponse>(
-      "GetWorkerVersioningRules", false,
-      [&](grpc::ClientContext* c, wsv::GetWorkerVersioningRulesResponse* p) {
-        return stub_->GetWorkerVersioningRules(c, req, p);
-      });
-}
-
-wsv::UpdateWorkerVersioningRulesResponse GrpcClient::UpdateWorkerVersioningRules(
-    const wsv::UpdateWorkerVersioningRulesRequest& req) {
-  return UnaryCall<wsv::UpdateWorkerVersioningRulesResponse>(
-      "UpdateWorkerVersioningRules", false,
-      [&](grpc::ClientContext* c, wsv::UpdateWorkerVersioningRulesResponse* p) {
-        return stub_->UpdateWorkerVersioningRules(c, req, p);
-      });
-}
-
-wsv::StartBatchOperationResponse GrpcClient::StartBatchOperation(
-    const wsv::StartBatchOperationRequest& req) {
-  return UnaryCall<wsv::StartBatchOperationResponse>(
-      "StartBatchOperation", false,
-      [&](grpc::ClientContext* c, wsv::StartBatchOperationResponse* p) {
-        return stub_->StartBatchOperation(c, req, p);
-      });
-}
-
-wsv::StopBatchOperationResponse GrpcClient::StopBatchOperation(
-    const wsv::StopBatchOperationRequest& req) {
-  return UnaryCall<wsv::StopBatchOperationResponse>(
-      "StopBatchOperation", false, [&](grpc::ClientContext* c, wsv::StopBatchOperationResponse* p) {
-        return stub_->StopBatchOperation(c, req, p);
-      });
-}
-
-wsv::DescribeBatchOperationResponse GrpcClient::DescribeBatchOperation(
-    const wsv::DescribeBatchOperationRequest& req) {
-  return UnaryCall<wsv::DescribeBatchOperationResponse>(
-      "DescribeBatchOperation", false,
-      [&](grpc::ClientContext* c, wsv::DescribeBatchOperationResponse* p) {
-        return stub_->DescribeBatchOperation(c, req, p);
-      });
-}
-
-wsv::ListBatchOperationsResponse GrpcClient::ListBatchOperations(
-    const wsv::ListBatchOperationsRequest& req) {
-  return UnaryCall<wsv::ListBatchOperationsResponse>(
-      "ListBatchOperations", false,
-      [&](grpc::ClientContext* c, wsv::ListBatchOperationsResponse* p) {
-        return stub_->ListBatchOperations(c, req, p);
-      });
-}
-
-wsv::GetClusterInfoResponse GrpcClient::GetClusterInfo(const wsv::GetClusterInfoRequest& req) {
-  return UnaryCall<wsv::GetClusterInfoResponse>(
-      "GetClusterInfo", false,
-      [&](grpc::ClientContext* c, wsv::GetClusterInfoResponse* p) {
-        return stub_->GetClusterInfo(c, req, p);
-      });
-}
-
-wsv::ListWorkerDeploymentsResponse GrpcClient::ListWorkerDeployments(
-    const wsv::ListWorkerDeploymentsRequest& req) {
-  return UnaryCall<wsv::ListWorkerDeploymentsResponse>(
-      "ListWorkerDeployments", false,
-      [&](grpc::ClientContext* c, wsv::ListWorkerDeploymentsResponse* p) {
-        return stub_->ListWorkerDeployments(c, req, p);
-      });
-}
-
-wsv::DescribeWorkerDeploymentResponse GrpcClient::DescribeWorkerDeployment(
-    const wsv::DescribeWorkerDeploymentRequest& req) {
-  return UnaryCall<wsv::DescribeWorkerDeploymentResponse>(
-      "DescribeWorkerDeployment", false,
-      [&](grpc::ClientContext* c, wsv::DescribeWorkerDeploymentResponse* p) {
-        return stub_->DescribeWorkerDeployment(c, req, p);
-      });
-}
-
-wsv::SetWorkerDeploymentCurrentVersionResponse GrpcClient::SetWorkerDeploymentCurrentVersion(
-    const wsv::SetWorkerDeploymentCurrentVersionRequest& req) {
-  return UnaryCall<wsv::SetWorkerDeploymentCurrentVersionResponse>(
-      "SetWorkerDeploymentCurrentVersion", false,
-      [&](grpc::ClientContext* c, wsv::SetWorkerDeploymentCurrentVersionResponse* p) {
-        return stub_->SetWorkerDeploymentCurrentVersion(c, req, p);
-      });
-}
-
-osv::AddSearchAttributesResponse GrpcClient::AddSearchAttributes(
-    const osv::AddSearchAttributesRequest& req) {
-  return UnaryCall<osv::AddSearchAttributesResponse>(
-      "AddSearchAttributes", false,
-      [&](grpc::ClientContext* c, osv::AddSearchAttributesResponse* p) {
-        return operator_stub_->AddSearchAttributes(c, req, p);
-      });
-}
-
-osv::ListSearchAttributesResponse GrpcClient::ListSearchAttributes(
-    const osv::ListSearchAttributesRequest& req) {
-  return UnaryCall<osv::ListSearchAttributesResponse>(
-      "ListSearchAttributes", false,
-      [&](grpc::ClientContext* c, osv::ListSearchAttributesResponse* p) {
-        return operator_stub_->ListSearchAttributes(c, req, p);
-      });
-}
-
-osv::RemoveSearchAttributesResponse GrpcClient::RemoveSearchAttributes(
-    const osv::RemoveSearchAttributesRequest& req) {
-  return UnaryCall<osv::RemoveSearchAttributesResponse>(
-      "RemoveSearchAttributes", false,
-      [&](grpc::ClientContext* c, osv::RemoveSearchAttributesResponse* p) {
-        return operator_stub_->RemoveSearchAttributes(c, req, p);
-      });
-}
-
-osv::ListClustersResponse GrpcClient::ListClusters(const osv::ListClustersRequest& req) {
-  return UnaryCall<osv::ListClustersResponse>(
-      "ListClusters", false,
-      [&](grpc::ClientContext* c, osv::ListClustersResponse* p) {
-        return operator_stub_->ListClusters(c, req, p);
-      });
-}
-
-osv::CreateNexusEndpointResponse GrpcClient::CreateNexusEndpoint(
-    const osv::CreateNexusEndpointRequest& req) {
-  return UnaryCall<osv::CreateNexusEndpointResponse>(
-      "CreateNexusEndpoint", false,
-      [&](grpc::ClientContext* c, osv::CreateNexusEndpointResponse* p) {
-        return operator_stub_->CreateNexusEndpoint(c, req, p);
-      });
-}
-
-osv::GetNexusEndpointResponse GrpcClient::GetNexusEndpoint(
-    const osv::GetNexusEndpointRequest& req) {
-  return UnaryCall<osv::GetNexusEndpointResponse>(
-      "GetNexusEndpoint", false,
-      [&](grpc::ClientContext* c, osv::GetNexusEndpointResponse* p) {
-        return operator_stub_->GetNexusEndpoint(c, req, p);
-      });
-}
-
-osv::ListNexusEndpointsResponse GrpcClient::ListNexusEndpoints(
-    const osv::ListNexusEndpointsRequest& req) {
-  return UnaryCall<osv::ListNexusEndpointsResponse>(
-      "ListNexusEndpoints", false,
-      [&](grpc::ClientContext* c, osv::ListNexusEndpointsResponse* p) {
-        return operator_stub_->ListNexusEndpoints(c, req, p);
-      });
-}
-
-osv::AddOrUpdateRemoteClusterResponse GrpcClient::AddOrUpdateRemoteCluster(
-    const osv::AddOrUpdateRemoteClusterRequest& req) {
-  return UnaryCall<osv::AddOrUpdateRemoteClusterResponse>(
-      "AddOrUpdateRemoteCluster", false,
-      [&](grpc::ClientContext* c, osv::AddOrUpdateRemoteClusterResponse* p) {
-        return operator_stub_->AddOrUpdateRemoteCluster(c, req, p);
-      });
-}
-
-osv::RemoveRemoteClusterResponse GrpcClient::RemoveRemoteCluster(
-    const osv::RemoveRemoteClusterRequest& req) {
-  return UnaryCall<osv::RemoveRemoteClusterResponse>(
-      "RemoveRemoteCluster", false,
-      [&](grpc::ClientContext* c, osv::RemoveRemoteClusterResponse* p) {
-        return operator_stub_->RemoveRemoteCluster(c, req, p);
-      });
-}
-
-osv::DeleteNamespaceResponse GrpcClient::DeleteNamespace(const osv::DeleteNamespaceRequest& req) {
-  return UnaryCall<osv::DeleteNamespaceResponse>(
-      "DeleteNamespace", false,
-      [&](grpc::ClientContext* c, osv::DeleteNamespaceResponse* p) {
-        return operator_stub_->DeleteNamespace(c, req, p);
-      });
-}
+#undef TEMPORAL_WS_CALL
+#undef TEMPORAL_OP_CALL
 
 }  // namespace temporal::internal

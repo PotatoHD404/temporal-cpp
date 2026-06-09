@@ -1,9 +1,11 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Non-determinism detection. A deterministic workflow, replayed against its
@@ -38,34 +40,30 @@ struct CommandEvent {
   std::string name;  // activity type / child workflow type (empty otherwise)
 };
 
-inline const char* CommandKindName(CommandEvent::Kind k) {
-  switch (k) {
-    case CommandEvent::Kind::Activity:
-      return "ScheduleActivity";
-    case CommandEvent::Kind::RequestCancelActivity:
-      return "RequestCancelActivity";
-    case CommandEvent::Kind::Timer:
-      return "StartTimer";
-    case CommandEvent::Kind::CancelTimer:
-      return "CancelTimer";
-    case CommandEvent::Kind::ChildWorkflow:
-      return "StartChildWorkflow";
-    case CommandEvent::Kind::RequestCancelExternalWorkflow:
-      return "RequestCancelExternalWorkflowExecution";
-    case CommandEvent::Kind::SignalExternalWorkflow:
-      return "SignalExternalWorkflowExecution";
-    case CommandEvent::Kind::UpsertSearchAttributes:
-      return "UpsertWorkflowSearchAttributes";
-    case CommandEvent::Kind::Marker:
-      return "RecordMarker";
-    case CommandEvent::Kind::CompleteWorkflow:
-      return "CompleteWorkflowExecution";
-    case CommandEvent::Kind::FailWorkflow:
-      return "FailWorkflowExecution";
-    case CommandEvent::Kind::ContinueAsNew:
-      return "ContinueAsNewWorkflowExecution";
-  }
-  return "Unknown";
+// Command-kind display names, indexed by enum value (the enum is contiguous from
+// 0). The static_assert below ties the table size to the enum count, so adding a
+// Kind without a name fails to compile rather than silently returning "Unknown".
+inline constexpr std::array<std::string_view, 12> kCommandKindNames = {
+    "ScheduleActivity",
+    "RequestCancelActivity",
+    "StartTimer",
+    "CancelTimer",
+    "StartChildWorkflow",
+    "RequestCancelExternalWorkflowExecution",
+    "SignalExternalWorkflowExecution",
+    "UpsertWorkflowSearchAttributes",
+    "RecordMarker",
+    "CompleteWorkflowExecution",
+    "FailWorkflowExecution",
+    "ContinueAsNewWorkflowExecution",
+};
+static_assert(static_cast<std::size_t>(CommandEvent::Kind::ContinueAsNew) + 1 ==
+                  kCommandKindNames.size(),
+              "kCommandKindNames is out of sync with CommandEvent::Kind");
+
+constexpr std::string_view CommandKindName(CommandEvent::Kind k) {
+  const auto idx = static_cast<std::size_t>(k);
+  return idx < kCommandKindNames.size() ? kCommandKindNames[idx] : std::string_view{"Unknown"};
 }
 
 // Does a produced command correspond to a recorded history event? Activities and
@@ -97,7 +95,7 @@ inline bool CommandMatchesEvent(const CommandEvent& produced, const CommandEvent
 
 namespace detail {
 inline std::string Describe(const CommandEvent& c) {
-  std::string s = CommandKindName(c.kind);
+  std::string s{CommandKindName(c.kind)};
   if (!c.id.empty()) {
     s += "/" + c.id;
   }

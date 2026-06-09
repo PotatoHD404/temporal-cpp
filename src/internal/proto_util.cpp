@@ -30,6 +30,7 @@ Payload FromProtoPayload(const tapi::common::v1::Payload& p) {
 
 tapi::common::v1::Payloads ToProtoPayloads(const Payloads& ps) {
   tapi::common::v1::Payloads out;
+  out.mutable_payloads()->Reserve(static_cast<int>(ps.size()));
   for (const auto& p : ps) {
     *out.add_payloads() = ToProtoPayload(p);
   }

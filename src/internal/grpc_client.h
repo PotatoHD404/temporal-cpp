@@ -124,6 +124,7 @@ class GrpcClient {
   std::string ns_;
   std::string identity_;
   std::string api_key_;
+  std::string auth_header_;  // "Bearer <api_key>" precomputed once; empty if no key
 };
 
 }  // namespace temporal::internal
