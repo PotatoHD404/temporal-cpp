@@ -71,10 +71,17 @@ std::map<std::string, std::string> TracingInterceptor::ReadFromHeader(const std:
 
 // Outbound (from inside a workflow): start a span, inject it into the outbound
 // header, then delegate. The span ends when the call returns.
+// Shared per-workflow slot holding the current inbound workflow span's context,
+// so outbound spans (activity/child/signal) can parent off it and stay in one trace.
+struct WorkflowSpanSlot {
+  const SpanContext* current = nullptr;
+};
+
 class TracingInterceptor::WorkflowOutbound : public WorkflowOutboundInterceptor {
  public:
-  WorkflowOutbound(TracingInterceptor* root, WorkflowOutboundInterceptor* next)
-      : WorkflowOutboundInterceptor(next), root_(root) {}
+  WorkflowOutbound(TracingInterceptor* root, std::shared_ptr<WorkflowSpanSlot> slot,
+                   WorkflowOutboundInterceptor* next)
+      : WorkflowOutboundInterceptor(next), root_(root), slot_(std::move(slot)) {}
 
   void ExecuteActivity(workflow::Context& ctx, ExecuteActivityOutboundInput& in,
                        Header& header) override {
@@ -109,12 +116,14 @@ class TracingInterceptor::WorkflowOutbound : public WorkflowOutboundInterceptor 
     opts.name = name;
     opts.tags[kWorkflowIdTag] = info.workflow_id;
     opts.tags[kRunIdTag] = info.run_id;
+    opts.parent = slot_->current;  // parent off the current workflow span (connects the trace)
     auto span = root_->tracer()->StartSpan(opts);
     WriteToHeader(root_->header_key(), root_->tracer()->Inject(*span), header);
     return span;
   }
 
   TracingInterceptor* root_;
+  std::shared_ptr<WorkflowSpanSlot> slot_;
 };
 
 // Inbound workflow: extract a parent from the inbound header, start a span,
@@ -126,7 +135,7 @@ class TracingInterceptor::WorkflowInbound : public WorkflowInboundInterceptor {
 
   void Init(WorkflowOutboundInterceptor* outbound) override {
     // Wrap the outbound chain so SDK-originated calls inject the current span.
-    outbound_ = std::make_unique<WorkflowOutbound>(root_, outbound);
+    outbound_ = std::make_unique<WorkflowOutbound>(root_, slot_, outbound);
     next_->Init(outbound_.get());
   }
 
@@ -141,11 +150,14 @@ class TracingInterceptor::WorkflowInbound : public WorkflowInboundInterceptor {
     opts.tags[kWorkflowIdTag] = info.workflow_id;
     opts.tags[kRunIdTag] = info.run_id;
     auto span = root_->tracer()->StartSpan(opts);
+    slot_->current = &span->context();  // visible to the outbound wrapper while the workflow runs
     try {
       temporal::Payloads result = next_->ExecuteWorkflow(ctx, in, header);
+      slot_->current = nullptr;
       span->End();
       return result;
     } catch (...) {
+      slot_->current = nullptr;
       span->End(/*error=*/true);
       throw;
     }
@@ -191,6 +203,7 @@ class TracingInterceptor::WorkflowInbound : public WorkflowInboundInterceptor {
   }
 
   TracingInterceptor* root_;
+  std::shared_ptr<WorkflowSpanSlot> slot_ = std::make_shared<WorkflowSpanSlot>();
   std::unique_ptr<WorkflowOutbound> outbound_;
 };
 

@@ -13,6 +13,7 @@
 #include <gtest/gtest.h>
 
 #include <temporal/interceptor/interceptor.h>
+#include <temporal/interceptor/tracing.h>
 #include <temporal/temporal.h>
 
 #include "temporal/api/failure/v1/message.pb.h"
@@ -1846,6 +1847,39 @@ TEST_F(IntegrationTest, WorkflowOutboundInterceptorInjectsActivityHeader) {
   EXPECT_EQ(h.Result<std::string>(), "ok");
   EXPECT_TRUE(g_activity_saw_trace_header.load());  // outbound header reached the activity
   worker.Stop();
+}
+
+// POSITIVE: the bundled TracingInterceptor (with an InMemoryTracer) creates spans
+// around the workflow + activity and propagates one trace from workflow to
+// activity through the header — i.e. tracing works end-to-end via the wired
+// interceptor paths (no OpenTelemetry exporter; the Tracer is bring-your-own).
+TEST_F(IntegrationTest, TracingInterceptorPropagatesTraceWorkflowToActivity) {
+  auto tracer = std::make_shared<temporal::interceptor::InMemoryTracer>();
+  auto tracing = std::make_shared<temporal::interceptor::TracingInterceptor>(tracer.get());
+  const auto tq = UniqueTaskQueue("tracing");
+  temporal::WorkerOptions wo;
+  wo.interceptors.push_back(tracing);
+  temporal::worker::Worker worker(*client_, tq, wo);
+  worker.RegisterWorkflow("EchoWorkflow", EchoWorkflow);
+  worker.RegisterActivity("Echo", EchoActivity);
+  worker.Start();
+  temporal::StartWorkflowOptions o;
+  o.task_queue = tq;
+  auto h = client_->StartWorkflow(o, "EchoWorkflow", std::string("hi"));
+  EXPECT_EQ(h.Result<std::string>(), "hi");
+  worker.Stop();  // joins worker threads before reading the recorded spans
+
+  const auto& recs = tracer->records();
+  ASSERT_GE(recs.size(), 2U);  // at least a workflow span + an activity span
+  // The activity span shares the workflow span's trace (propagated via header).
+  const std::string trace = recs.front().trace_id;
+  int linked = 0;
+  for (const auto& r : recs) {
+    if (r.trace_id == trace) {
+      ++linked;
+    }
+  }
+  EXPECT_GE(linked, 2);  // workflow + activity spans in one trace
 }
 
 // A failure converter that tags every error message, to prove the activity
