@@ -2241,4 +2241,41 @@ TEST_F(IntegrationTest, TypedActivityHandleRoundTrip) {
   worker.Stop();
 }
 
+// Typed signal/query/update handles: name + type are bound in one place, so the
+// channel type, sent value, and result type are checked/deduced (no strings, no
+// explicit <R>).
+inline constexpr temporal::SignalRef<bool> kStopSignal{"stop"};
+inline constexpr temporal::QueryRef<int> kSumQuery{"sum"};
+inline constexpr temporal::UpdateRef<int> kBumpUpdate{"bump"};
+
+int TypedSquWorkflow(temporal::workflow::Context& ctx) {
+  int sum = 0;
+  ctx.SetQueryHandler(kSumQuery, [&sum]() -> int { return sum; });
+  ctx.SetUpdateHandler(kBumpUpdate, [&sum](int by) -> int {
+    sum += by;
+    return sum;
+  });
+  ctx.GetSignalChannel(kStopSignal).Receive();  // ReceiveChannel<bool>, deduced
+  return sum;
+}
+
+// POSITIVE: typed update (returns int, deduced), typed query, and a typed signal
+// all round-trip end-to-end. Update/query are synchronous so the ordering is
+// deterministic.
+TEST_F(IntegrationTest, TypedSignalQueryUpdateHandles) {
+  const auto tq = UniqueTaskQueue("typed-squ");
+  temporal::worker::Worker worker(*client_, tq);
+  worker.RegisterWorkflow("TypedSquWorkflow", TypedSquWorkflow);
+  worker.Start();
+  temporal::StartWorkflowOptions o;
+  o.task_queue = tq;
+  auto h = client_->StartWorkflow(o, "TypedSquWorkflow");
+  EXPECT_EQ(h.Update(kBumpUpdate, 5), 5);    // typed update; result int deduced
+  EXPECT_EQ(h.Update(kBumpUpdate, 7), 12);
+  EXPECT_EQ(h.Query(kSumQuery), 12);         // typed query; result int deduced
+  h.Signal(kStopSignal, true);               // typed signal; bool checked
+  EXPECT_EQ(h.Result<int>(), 12);
+  worker.Stop();
+}
+
 }  // namespace

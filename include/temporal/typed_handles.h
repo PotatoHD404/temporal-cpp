@@ -22,6 +22,33 @@ struct ActivityRef {
   static constexpr auto function = Fn;
 };
 
+// Typed handles for signals / queries / updates: each binds the wire name to the
+// relevant C++ type(s), so the channel type, sent value, and result type are
+// checked and deduced instead of restated as a string + explicit template arg.
+// Declare one at namespace scope, e.g.
+//   inline constexpr temporal::SignalRef<std::string> kSetName{"setName"};
+//   inline constexpr temporal::QueryRef<int> kGetCount{"getCount"};
+// then use it with Context::GetSignalChannel/SetQueryHandler/SetUpdateHandler and
+// WorkflowHandle::Signal/Query/Update. Like ActivityRef, these lower to the same
+// string name, so they interoperate with the string-based API.
+template <class T>
+struct SignalRef {
+  std::string_view name;
+  using value_type = T;
+};
+
+template <class R>
+struct QueryRef {
+  std::string_view name;
+  using result_type = R;
+};
+
+template <class R>
+struct UpdateRef {
+  std::string_view name;
+  using result_type = R;
+};
+
 }  // namespace temporal
 
 // Declares `<fn>_activity` — an ActivityRef whose Temporal type name is "<fn>"

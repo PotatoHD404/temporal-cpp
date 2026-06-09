@@ -126,6 +126,12 @@ class Context {
     return ReceiveChannel<T>(std::move(name), converter_, env_);
   }
 
+  // Typed-handle overload: the channel's payload type is deduced from the SignalRef.
+  template <class T>
+  ReceiveChannel<T> GetSignalChannel(const SignalRef<T>& ref) {
+    return GetSignalChannel<T>(std::string(ref.name));
+  }
+
   // True once a cancel has been requested for this workflow execution. The
   // workflow decides how to react (finish, clean up, etc.).
   bool IsCancelled() const { return env_->IsCancelRequested(); }
@@ -170,6 +176,15 @@ class Context {
         std::move(name), MakeQueryFn<typename Sig::ret, typename Sig::args>(std::move(handler)));
   }
 
+  // Typed-handle overload: ties the handler's result type to the QueryRef (a
+  // mismatch is a compile error) and registers under the ref's name.
+  template <class R, class Fn>
+  void SetQueryHandler(const QueryRef<R>& ref, Fn handler) {
+    static_assert(std::is_same_v<typename internal::fn_sig<std::decay_t<Fn>>::ret, R>,
+                  "query handler must return the QueryRef's result type");
+    SetQueryHandler(std::string(ref.name), std::move(handler));
+  }
+
   // Register an update handler `R Fn(Args...)`, à la `workflow.SetUpdateHandler`.
   // Unlike a query it may mutate workflow state, and the call is recorded.
   template <class Fn>
@@ -177,6 +192,14 @@ class Context {
     using Sig = internal::fn_sig<std::decay_t<Fn>>;
     env_->RegisterUpdateHandler(
         std::move(name), MakeQueryFn<typename Sig::ret, typename Sig::args>(std::move(handler)));
+  }
+
+  // Typed-handle overload: ties the handler's result type to the UpdateRef.
+  template <class R, class Fn>
+  void SetUpdateHandler(const UpdateRef<R>& ref, Fn handler) {
+    static_assert(std::is_same_v<typename internal::fn_sig<std::decay_t<Fn>>::ret, R>,
+                  "update handler must return the UpdateRef's result type");
+    SetUpdateHandler(std::string(ref.name), std::move(handler));
   }
 
   // Register an update handler with a read-only validator. The validator takes

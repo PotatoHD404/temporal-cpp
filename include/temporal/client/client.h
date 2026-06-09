@@ -12,6 +12,7 @@
 #include <temporal/common/options.h>
 #include <temporal/common/payload.h>
 #include <temporal/converter/data_converter.h>
+#include <temporal/typed_handles.h>
 
 namespace temporal {
 
@@ -65,6 +66,12 @@ class WorkflowHandle {
     }
   }
 
+  // Typed-handle overload: result type + name come from the QueryRef.
+  template <class R, class... Args>
+  R Query(const QueryRef<R>& ref, const Args&... args) {
+    return Query<R>(ref.name, args...);
+  }
+
   // Synchronously send an update and wait for its result (throws on failure).
   template <class R, class... Args>
   R Update(std::string_view update_name, const Args&... args) {
@@ -77,6 +84,12 @@ class WorkflowHandle {
     }
   }
 
+  // Typed-handle overload: result type + name come from the UpdateRef.
+  template <class R, class... Args>
+  R Update(const UpdateRef<R>& ref, const Args&... args) {
+    return Update<R>(ref.name, args...);
+  }
+
   void Signal(std::string_view signal_name, const Payloads& args);
 
   // Encode + send a signal in one call, like StartWorkflow/Query/Update (so callers
@@ -86,6 +99,12 @@ class WorkflowHandle {
     requires(!(sizeof...(Args) == 1 && (std::is_same_v<std::decay_t<Args>, Payloads> && ...)))
   void Signal(std::string_view signal_name, const Args&... args) {
     Signal(signal_name, converter_->ToPayloads(args...));
+  }
+
+  // Typed-handle overload: the payload type is checked against the SignalRef.
+  template <class T>
+  void Signal(const SignalRef<T>& ref, const T& value) {
+    Signal(ref.name, value);
   }
 
   void Cancel();
