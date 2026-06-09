@@ -172,7 +172,7 @@ struct WorkerDeploymentDescription {
 // gRPC channel). Mirrors the Go SDK's `client.Client`.
 class Client {
  public:
-  static Client Connect(const ClientOptions& options = {});
+  [[nodiscard]] static Client Connect(const ClientOptions& options = {});
 
   // Start a workflow by type name, encoding `args` through the data converter.
   template <class... Args>

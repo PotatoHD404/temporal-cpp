@@ -31,7 +31,7 @@ class ReceiveChannel {
 
   // Non-blocking receive: returns the next buffered signal, or std::nullopt when
   // none is available — the idiomatic form (`if (auto v = ch.ReceiveAsync())`).
-  std::optional<T> ReceiveAsync() {
+  [[nodiscard]] std::optional<T> ReceiveAsync() {
     Payloads payloads;
     if (!env_->TryConsumeSignal(name_, payloads)) {
       return std::nullopt;
@@ -51,7 +51,7 @@ class ReceiveChannel {
 
   // Whether a buffered signal is available to Receive() without blocking. Used by
   // Selector channel cases.
-  bool HasPending() const { return env_->HasSignal(name_); }
+  [[nodiscard]] bool HasPending() const { return env_->HasSignal(name_); }
 
  private:
   T Decode(const Payloads& payloads) const {

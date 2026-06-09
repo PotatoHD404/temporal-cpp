@@ -73,8 +73,8 @@ class Worker {
 
   // Observability: workflow tasks served as sticky-cache continuations vs. full
   // replays since the worker started.
-  long cache_hits() const;
-  long replays() const;
+  [[nodiscard]] long cache_hits() const;
+  [[nodiscard]] long replays() const;
 
  private:
   void RegisterWorkflowFn(std::string name, WorkflowFn fn);

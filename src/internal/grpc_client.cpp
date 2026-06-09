@@ -60,8 +60,11 @@ Resp GrpcClient::UnaryCall(const char* name, bool poll, Invoke&& invoke) const {
     if (poll && status.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED) {
       return Resp{};
     }
-    throw RpcError(std::string("rpc ") + name + " failed: " + status.error_message(),
-                   status.error_code() == grpc::StatusCode::NOT_FOUND);
+    const std::string msg = std::string("rpc ") + name + " failed: " + status.error_message();
+    if (status.error_code() == grpc::StatusCode::NOT_FOUND) {
+      throw NotFoundError(msg);  // a RpcError subtype; not_found() stays true
+    }
+    throw RpcError(msg);
   }
   return resp;
 }

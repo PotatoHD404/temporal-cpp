@@ -67,4 +67,12 @@ class RpcError : public TemporalError {
   bool not_found_ = false;
 };
 
+// A server NOT_FOUND (unknown workflow / schedule / namespace id). Derives from
+// RpcError, so `catch (RpcError&)` still catches it (and not_found() is true);
+// new code can `catch (NotFoundError&)` directly instead of inspecting the bool.
+class NotFoundError : public RpcError {
+ public:
+  explicit NotFoundError(const std::string& message) : RpcError(message, /*not_found=*/true) {}
+};
+
 }  // namespace temporal

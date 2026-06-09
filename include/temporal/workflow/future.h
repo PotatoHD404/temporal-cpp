@@ -21,7 +21,7 @@ class Future {
          internal::WorkflowOutbound* env)
       : state_(std::move(state)), converter_(converter), env_(env) {}
 
-  bool IsReady() const { return state_->ready; }
+  [[nodiscard]] bool IsReady() const { return state_->ready; }
 
   // Request cancellation of the underlying operation (timers today). After this,
   // Get() unblocks immediately (the operation is treated as cancelled) rather
