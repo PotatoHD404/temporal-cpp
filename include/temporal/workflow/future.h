@@ -1,5 +1,6 @@
 #pragma once
 
+#include <coroutine>
 #include <memory>
 #include <type_traits>
 #include <utility>
@@ -39,6 +40,19 @@ class Future {
     } else {
       return converter_->template FromPayload<T>(state_->result.at(0));
     }
+  }
+
+  // Enables `co_await fut` in a workflow_task coroutine (see <temporal/workflow/coro.h>).
+  // Equivalent to Get(): it blocks the workflow through the same stackful engine and
+  // yields the typed result, so command order + replay are unchanged.
+  auto operator co_await() {
+    struct Awaiter {
+      Future fut;
+      bool await_ready() { return false; }
+      bool await_suspend(std::coroutine_handle<>) { return false; }  // resume now; block in resume
+      T await_resume() { return fut.Get(); }
+    };
+    return Awaiter{std::move(*this)};
   }
 
  private:

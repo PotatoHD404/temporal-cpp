@@ -2309,4 +2309,34 @@ TEST_F(IntegrationTest, WorkerRunWithStopToken) {
   runner.request_stop();  // Run() returns + drains; the jthread joins on scope exit
 }
 
+// A workflow written in the C++20 coroutine style: workflow_task + co_await + co_return.
+temporal::workflow::workflow_task<std::string> CoAwaitWorkflow(temporal::workflow::Context& ctx,
+                                                               std::string s) {
+  temporal::ActivityOptions o;
+  o.start_to_close_timeout = 10s;
+  const std::string a = co_await ctx.ExecuteActivity<std::string>(o, "Echo", s);
+  const std::string b = co_await ctx.ExecuteActivity<std::string>(o, "Echo", a + "!");
+  co_return b;
+}
+
+// POSITIVE: the co_await authoring mode runs activities AND replays deterministically
+// (it lowers to the same commands as the .Get() form).
+TEST_F(IntegrationTest, CoAwaitWorkflowRunsAndReplays) {
+  const auto tq = UniqueTaskQueue("coawait");
+  temporal::worker::Worker worker(*client_, tq);
+  worker.RegisterWorkflow("CoAwaitWorkflow", CoAwaitWorkflow);
+  worker.RegisterActivity("Echo", EchoActivity);
+  worker.Start();
+  temporal::StartWorkflowOptions o;
+  o.task_queue = tq;
+  auto h = client_->StartWorkflow(o, "CoAwaitWorkflow", std::string("hi"));
+  EXPECT_EQ(h.Result<std::string>(), "hi!");
+  const std::string history = h.FetchHistoryJson();
+  worker.Stop();
+  // Replay the coroutine workflow against its real history — proves replay-determinism.
+  temporal::worker::Worker replayer(*client_, UniqueTaskQueue("coawait-rep"));
+  replayer.RegisterWorkflow("CoAwaitWorkflow", CoAwaitWorkflow);
+  EXPECT_NO_THROW(replayer.ReplayWorkflowHistory(history));
+}
+
 }  // namespace

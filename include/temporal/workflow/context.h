@@ -16,6 +16,7 @@
 #include <temporal/internal/workflow_outbound.h>
 #include <temporal/log/logger.h>
 #include <temporal/workflow/channel.h>
+#include <temporal/workflow/coro.h>
 #include <temporal/workflow/future.h>
 
 namespace temporal::workflow {

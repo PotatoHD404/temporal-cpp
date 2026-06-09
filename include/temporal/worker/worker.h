@@ -102,7 +102,19 @@ class Worker {
       const DataConverter& dc = ctx.data_converter();
       auto args = internal::DecodeArgs<UserArgs>(
           dc, in, std::make_index_sequence<std::tuple_size_v<UserArgs>>{});
-      if constexpr (std::is_void_v<Ret>) {
+      if constexpr (workflow::is_workflow_task_v<Ret>) {
+        // Coroutine workflow: it runs to completion eagerly (co_await delegates to
+        // the stackful engine), then we read the result from the promise.
+        using R = typename Ret::value_type;
+        auto task = std::apply([&](auto&... a) { return fn(ctx, a...); }, args);
+        if constexpr (std::is_void_v<R>) {
+          task.get();  // rethrows a workflow failure / continue-as-new
+          return Payloads{};
+        } else {
+          R result = task.get();
+          return Payloads{dc.ToPayload(result)};
+        }
+      } else if constexpr (std::is_void_v<Ret>) {
         std::apply([&](auto&... a) { fn(ctx, a...); }, args);
         return Payloads{};
       } else {
