@@ -1775,4 +1775,48 @@ TEST_F(IntegrationTest, CustomFailureConverterEncodesActivityFailure) {
   worker.Stop();
 }
 
+std::atomic<int> g_client_start_intercepts{0};
+
+class RecordingClientOutbound : public temporal::interceptor::ClientOutboundInterceptor {
+ public:
+  explicit RecordingClientOutbound(temporal::interceptor::ClientOutboundInterceptor* next)
+      : temporal::interceptor::ClientOutboundInterceptor(next) {}
+  std::string StartWorkflow(temporal::interceptor::StartWorkflowInput& in,
+                            temporal::interceptor::Header& header) override {
+    ++g_client_start_intercepts;
+    return next_->StartWorkflow(in, header);
+  }
+};
+
+class ClientRecordingInterceptor : public temporal::interceptor::Interceptor {
+ public:
+  std::unique_ptr<temporal::interceptor::ClientOutboundInterceptor> InterceptClient(
+      temporal::interceptor::ClientOutboundInterceptor* next) override {
+    return std::make_unique<RecordingClientOutbound>(next);
+  }
+};
+
+// POSITIVE: a client-outbound interceptor (installed via ClientOptions) wraps the
+// real StartWorkflow call.
+TEST_F(IntegrationTest, ClientOutboundInterceptorWrapsStartWorkflow) {
+  const char* addr = std::getenv("TEMPORAL_ADDRESS");
+  temporal::ClientOptions opt;
+  opt.target = (addr != nullptr) ? addr : "localhost:7233";
+  opt.interceptors.push_back(std::make_shared<ClientRecordingInterceptor>());
+  auto ic_client = temporal::client::Client::Connect(opt);
+
+  const auto tq = UniqueTaskQueue("client-interceptor");
+  g_client_start_intercepts = 0;
+  temporal::worker::Worker worker(ic_client, tq);
+  worker.RegisterWorkflow("EchoWorkflow", EchoWorkflow);
+  worker.RegisterActivity("Echo", EchoActivity);
+  worker.Start();
+  temporal::StartWorkflowOptions o;
+  o.task_queue = tq;
+  auto h = ic_client.StartWorkflow(o, "EchoWorkflow", std::string("hi"));
+  EXPECT_EQ(h.Result<std::string>(), "hi");
+  EXPECT_EQ(g_client_start_intercepts.load(), 1);  // StartWorkflow intercepted once
+  worker.Stop();
+}
+
 }  // namespace

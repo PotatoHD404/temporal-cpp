@@ -47,12 +47,19 @@ find_package(protobuf CONFIG REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(Threads REQUIRED)
+# Bundled GZIP payload codec (src/converter/data_converter.cpp). zlib is already a
+# transitive dependency of gRPC, so this resolves under both Conan and Homebrew.
+find_package(ZLIB REQUIRED)
 
 # ---- Generated Temporal API protobufs/gRPC ---------------------------------
 include(cmake/TemporalProto.cmake)   # -> target temporal_proto
 
 # ---- The SDK library -------------------------------------------------------
 add_subdirectory(src)                # -> target temporal_sdk / temporal::sdk
+
+# zlib backs the bundled GZIP payload codec; PRIVATE since it's an implementation
+# detail (no public header includes <zlib.h>).
+target_link_libraries(temporal_sdk PRIVATE ZLIB::ZLIB)
 
 if(TEMPORAL_BUILD_EXAMPLES)
   add_subdirectory(examples/hello_world)

@@ -1,10 +1,12 @@
 #include <temporal/client/client.h>
 
 #include <cctype>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "google/protobuf/util/json_util.h"
 #include "temporal/api/enums/v1/batch_operation.pb.h"
@@ -21,6 +23,7 @@
 #include "internal/proto_util.h"
 
 #include <temporal/common/errors.h>
+#include <temporal/interceptor/interceptor.h>
 #include <temporal/log/logger.h>
 
 namespace temporal::client {
@@ -88,6 +91,23 @@ std::string IndexedValueTypeName(enums::IndexedValueType type) {
   }
   return out;
 }
+
+// Terminal client-outbound interceptor: issues the real RPC. The interceptor
+// chain wraps this; with no interceptors it is the head and the call runs
+// directly. Holds the actual-work callback so the Client method stays the source
+// of the RPC logic.
+class RootClientOutbound : public interceptor::ClientOutboundInterceptor {
+ public:
+  using StartFn = std::function<std::string(interceptor::StartWorkflowInput&, interceptor::Header&)>;
+  explicit RootClientOutbound(StartFn start) : start_(std::move(start)) {}
+  std::string StartWorkflow(interceptor::StartWorkflowInput& in,
+                            interceptor::Header& header) override {
+    return start_(in, header);
+  }
+
+ private:
+  StartFn start_;
+};
 
 }  // namespace
 
@@ -259,6 +279,7 @@ Client Client::Connect(const ClientOptions& options) {
   c.identity_ = options.identity.empty() ? internal::DefaultIdentity() : options.identity;
   c.converter_ = options.data_converter ? options.data_converter : DataConverter::Default();
   c.logger_ = options.logger ? options.logger : log::DefaultLogger();
+  c.interceptors_ = options.interceptors;
   const std::string target =
       options.target.empty() ? std::string("localhost:7233") : options.target;
   c.grpc_ =
@@ -307,40 +328,62 @@ WorkflowHandle Client::StartWorkflowPayloads(const StartWorkflowOptions& options
                                              std::string_view workflow_type, const Payloads& input) {
   const std::string workflow_id = options.id.empty() ? internal::NewUuid() : options.id;
 
-  internal::wsv::StartWorkflowExecutionRequest req;
-  req.set_namespace_(ns_);
-  req.set_workflow_id(workflow_id);
-  req.mutable_workflow_type()->set_name(std::string(workflow_type));
-  req.mutable_task_queue()->set_name(options.task_queue);
-  if (!input.empty()) {
-    *req.mutable_input() = internal::ToProtoPayloads(input);
-  }
-  req.set_identity(identity_);
-  req.set_request_id(internal::NewUuid());
-  if (options.execution_timeout.count() > 0) {
-    *req.mutable_workflow_execution_timeout() = internal::ToProtoDuration(options.execution_timeout);
-  }
-  if (options.run_timeout.count() > 0) {
-    *req.mutable_workflow_run_timeout() = internal::ToProtoDuration(options.run_timeout);
-  }
-  if (options.task_timeout.count() > 0) {
-    *req.mutable_workflow_task_timeout() = internal::ToProtoDuration(options.task_timeout);
-  }
-  if (options.retry_policy_set) {
-    *req.mutable_retry_policy() = internal::ToProtoRetryPolicy(options.retry_policy);
-  }
-  for (const auto& [key, value] : options.memo) {
-    (*req.mutable_memo()->mutable_fields())[key] = internal::ToProtoPayload(value);
-  }
-  for (const auto& [key, value] : options.search_attributes) {
-    (*req.mutable_search_attributes()->mutable_indexed_fields())[key] = internal::ToProtoPayload(value);
-  }
-  for (const auto& [key, value] : options.headers) {
-    (*req.mutable_header()->mutable_fields())[key] = internal::ToProtoPayload(value);
-  }
+  // Chain terminal: issue the real RPC using the (interceptor-augmented) header.
+  auto do_start = [this, &workflow_id](interceptor::StartWorkflowInput& in,
+                                       interceptor::Header& header) -> std::string {
+    internal::wsv::StartWorkflowExecutionRequest req;
+    req.set_namespace_(ns_);
+    req.set_workflow_id(workflow_id);
+    req.mutable_workflow_type()->set_name(in.workflow_type);
+    req.mutable_task_queue()->set_name(in.options.task_queue);
+    if (!in.args.empty()) {
+      *req.mutable_input() = internal::ToProtoPayloads(in.args);
+    }
+    req.set_identity(identity_);
+    req.set_request_id(internal::NewUuid());
+    if (in.options.execution_timeout.count() > 0) {
+      *req.mutable_workflow_execution_timeout() =
+          internal::ToProtoDuration(in.options.execution_timeout);
+    }
+    if (in.options.run_timeout.count() > 0) {
+      *req.mutable_workflow_run_timeout() = internal::ToProtoDuration(in.options.run_timeout);
+    }
+    if (in.options.task_timeout.count() > 0) {
+      *req.mutable_workflow_task_timeout() = internal::ToProtoDuration(in.options.task_timeout);
+    }
+    if (in.options.retry_policy_set) {
+      *req.mutable_retry_policy() = internal::ToProtoRetryPolicy(in.options.retry_policy);
+    }
+    for (const auto& [key, value] : in.options.memo) {
+      (*req.mutable_memo()->mutable_fields())[key] = internal::ToProtoPayload(value);
+    }
+    for (const auto& [key, value] : in.options.search_attributes) {
+      (*req.mutable_search_attributes()->mutable_indexed_fields())[key] =
+          internal::ToProtoPayload(value);
+    }
+    for (const auto& [key, value] : header) {  // interceptors may have added entries
+      (*req.mutable_header()->mutable_fields())[key] = internal::ToProtoPayload(value);
+    }
+    return grpc_->StartWorkflowExecution(req).run_id();
+  };
 
-  const auto resp = grpc_->StartWorkflowExecution(req);
-  return {grpc_, converter_, ns_, workflow_id, resp.run_id()};
+  // Run StartWorkflow through the client-outbound interceptor chain (terminal =
+  // do_start). With no interceptors the head is the terminal: a direct call.
+  RootClientOutbound root(do_start);
+  std::vector<interceptor::Interceptor*> factories;
+  factories.reserve(interceptors_.size());
+  for (const auto& i : interceptors_) {
+    factories.push_back(i.get());
+  }
+  auto chain = interceptor::BuildClientOutboundChain(factories, &root);
+  interceptor::StartWorkflowInput in;
+  in.workflow_type = std::string(workflow_type);
+  in.options = options;
+  in.options.id = workflow_id;
+  in.args = input;
+  interceptor::Header header(options.headers);
+  const std::string run_id = chain.head()->StartWorkflow(in, header);
+  return {grpc_, converter_, ns_, workflow_id, run_id};
 }
 
 WorkflowHandle Client::SignalWithStartWorkflowPayloads(const StartWorkflowOptions& options,

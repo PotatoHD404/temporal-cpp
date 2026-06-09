@@ -2,12 +2,15 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include <zlib.h>
 
 // Protobuf runtime is included only here, never in the public header (see the
 // forward declaration of google::protobuf::Message in data_converter.h).
@@ -239,6 +242,78 @@ Payload Base64PayloadCodec::Decode(const Payload& payload) const {
   Payload out = payload;
   out.data = Base64Decode(payload.data);
   out.metadata.erase(kCodecKey);
+  return out;
+}
+
+namespace {
+
+// Marker value stored under kCodecKey (the same "codec" slot base64 uses) so the
+// codec layer composes the gzip codec the same way it composes base64.
+constexpr const char* kGzipCodecValue = "gzip";
+// Holds the original (uncompressed) byte length so Decode can size the inflate
+// buffer exactly without a grow-on-Z_BUF_ERROR loop.
+constexpr const char* kGzipLenKey = "codec-gzip-len";
+
+std::string GzipCompress(const std::string& in) {
+  uLongf dest_len = compressBound(static_cast<uLong>(in.size()));
+  std::string out(dest_len, '\0');
+  const int rc = compress2(reinterpret_cast<Bytef*>(out.data()), &dest_len,
+                           reinterpret_cast<const Bytef*>(in.data()),
+                           static_cast<uLong>(in.size()), Z_BEST_COMPRESSION);
+  if (rc != Z_OK) {
+    throw DataConverterError("gzip codec: compression failed (zlib code " +
+                             std::to_string(rc) + ")");
+  }
+  out.resize(dest_len);
+  return out;
+}
+
+std::string GzipDecompress(const std::string& in, std::size_t original_len) {
+  std::string out(original_len, '\0');
+  uLongf dest_len = static_cast<uLongf>(original_len);
+  // std::string::data() is non-null even when empty (it points at the trailing
+  // NUL), so this satisfies uncompress's non-null dest requirement either way.
+  const int rc = uncompress(reinterpret_cast<Bytef*>(out.data()), &dest_len,
+                            reinterpret_cast<const Bytef*>(in.data()),
+                            static_cast<uLong>(in.size()));
+  if (rc != Z_OK) {
+    throw DataConverterError("gzip codec: decompression failed (zlib code " +
+                             std::to_string(rc) + ")");
+  }
+  out.resize(dest_len);
+  return out;
+}
+
+}  // namespace
+
+Payload GzipPayloadCodec::Encode(const Payload& payload) const {
+  Payload out = payload;  // preserve all inner metadata (encoding, type, …)
+  out.metadata[kGzipLenKey] = std::to_string(payload.data.size());
+  out.data = GzipCompress(payload.data);
+  out.metadata[kCodecKey] = kGzipCodecValue;
+  return out;
+}
+
+Payload GzipPayloadCodec::Decode(const Payload& payload) const {
+  const auto it = payload.metadata.find(kCodecKey);
+  if (it == payload.metadata.end() || it->second != kGzipCodecValue) {
+    return payload;  // not encoded by this codec
+  }
+  const auto len_it = payload.metadata.find(kGzipLenKey);
+  if (len_it == payload.metadata.end()) {
+    throw DataConverterError("gzip codec: payload missing original-length marker");
+  }
+  std::size_t original_len = 0;
+  try {
+    original_len = static_cast<std::size_t>(std::stoull(len_it->second));
+  } catch (const std::exception&) {
+    throw DataConverterError("gzip codec: invalid original-length marker: " +
+                             len_it->second);
+  }
+  Payload out = payload;
+  out.data = GzipDecompress(payload.data, original_len);
+  out.metadata.erase(kCodecKey);
+  out.metadata.erase(kGzipLenKey);
   return out;
 }
 

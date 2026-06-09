@@ -71,6 +71,18 @@ class Base64PayloadCodec : public PayloadCodec {
   Payload Decode(const Payload& payload) const override;
 };
 
+// Bundled compression codec: gzip-compresses the payload bytes via zlib. Encode
+// stamps the codec marker (and the original byte length so Decode can size the
+// inflate buffer) and replaces `data` with the deflated bytes; Decode reverses it
+// for a marked payload and passes any other payload through unchanged. Inner
+// metadata (encoding, message type, …) is preserved so the payload decodes
+// identically after a round-trip.
+class GzipPayloadCodec : public PayloadCodec {
+ public:
+  Payload Encode(const Payload& payload) const override;
+  Payload Decode(const Payload& payload) const override;
+};
+
 // Offloads large payload bodies to an external store ("remote payload codec"):
 // Store() persists the bytes somewhere and returns a payload whose `data` is a
 // reference (key) instead of the body; Resolve() fetches the body back. The

@@ -91,7 +91,7 @@ cache. This page is the honest accounting.
 | JSON / nil / bytes converters | ✅ | nlohmann-json default stack |
 | Custom converters | ✅ | |
 | Proto / ProtoJSON converters | ✅ | binary protobuf + proto-json (`WithProtoJson`), both directions; unit-tested |
-| Payload codecs (encryption/compression) | 🟡 | `PayloadCodec` interface + chain applied to every payload + base64 reference codec; no bundled encryption/compression codec |
+| Payload codecs (encryption/compression) | ✅ | `PayloadCodec` interface + chain + bundled base64 and **gzip (deflate) compression** codecs; encryption is bring-your-own (as in the Go SDK) |
 | Custom failure converter | 🟡 | `FailureConverter` interface + default + `DataConverter` hook; **wired into the activity-failure encoding path (e2e-verified)**; workflow-failure + decode paths still use the default |
 | Large-payload / external storage | 🟡 | `PayloadStorage` interface + in-memory reference impl; no real external store (S3/GCS) bundled |
 
@@ -111,7 +111,7 @@ cache. This page is the honest accounting.
 | Capability | Status | Notes |
 |---|---|---|
 | TLS / mTLS / API-key auth | 🟡 | implemented (`ClientOptions::tls` + `api_key`, SslCredentials + per-call auth); **e2e-unverified locally** — no TLS Temporal server in the harness |
-| Interceptors (client + worker) | 🟡 | framework + **activity-inbound wiring live & e2e-verified** (`WorkerOptions::interceptors`); client-outbound + workflow-inbound wiring pending |
+| Interceptors (client + worker) | 🟡 | framework + **activity-inbound & client-outbound wiring live & e2e-verified** (`WorkerOptions`/`ClientOptions::interceptors`); workflow-inbound/outbound wiring pending |
 | Metrics | 🟡 | `MetricsHandler` (counter/gauge/timer): task counters + execution-latency timers + in-flight gauge + poll success/timeout counters; e2e-verified; not the full Go metric set |
 | Tracing / OpenTelemetry | 🟡 | `Tracer`/`Span` interface + `TracingInterceptor` (inject/extract via headers), unit-tested; no OTel exporter bundled; not yet wired |
 | Structured logging | ✅ | pluggable `log::Logger` |

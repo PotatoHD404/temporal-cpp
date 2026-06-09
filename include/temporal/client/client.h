@@ -270,6 +270,7 @@ class Client {
   std::shared_ptr<log::Logger> logger_;
   std::string ns_;
   std::string identity_;
+  std::vector<std::shared_ptr<interceptor::Interceptor>> interceptors_;  // client-outbound chain
 };
 
 }  // namespace client
